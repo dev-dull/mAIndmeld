@@ -5,7 +5,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export const ROOM_FORMAT = 1;
+import { upgradeRoom } from "./rooms.js";
+
+export const ROOM_FORMAT = 2;
 
 export class FormatTooNewError extends Error {
   constructor(file, found, supported) {
@@ -67,6 +69,7 @@ export class Store {
     if (!room) return null;
     if (typeof room.format !== "number") room.format = 1;
     if (room.format > ROOM_FORMAT) throw new FormatTooNewError(file, room.format, ROOM_FORMAT);
+    if (room.format < ROOM_FORMAT) upgradeRoom(room); // written back on the next save
     return room;
   }
 

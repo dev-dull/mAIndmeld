@@ -12,10 +12,10 @@ export function tmpDataDir() {
 }
 
 /** Boot a server on an ephemeral port with its own data directory. */
-export async function boot({ limits } = {}) {
+export async function boot({ limits, extra, env } = {}) {
   const dataDir = tmpDataDir();
-  if (limits) fs.writeFileSync(path.join(dataDir, "config.json"), JSON.stringify({ limits }));
-  const config = loadConfig({ dataDir, port: 0 }, { USER: "tester" });
+  if (limits || extra) fs.writeFileSync(path.join(dataDir, "config.json"), JSON.stringify({ ...(extra || {}), ...(limits ? { limits } : {}) }));
+  const config = loadConfig({ dataDir, port: 0 }, { USER: "tester", ...(env || {}) });
   const app = createApp(config);
   const { token } = app.auth.createToken("test");
   await app.start();

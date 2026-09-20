@@ -157,7 +157,10 @@ test("response mode and direct close", async () => {
   const { room } = await createRoom();
   const mode = await s.req("POST", `/api/rooms/${room.code}/mode`, { body: { response_mode: "addressed_only" } });
   assert.equal(mode.status, 200);
-  const closed = await s.req("POST", `/api/rooms/${room.code}/close`, { body: { summary: "Agreed on --format json." } });
+  const agentClose = await s.req("POST", `/api/rooms/${room.code}/close`, { body: { summary: "nope" } });
+  assert.equal(agentClose.status, 403, "direct close is a human power");
+  await s.req("POST", `/api/rooms/${room.code}/join`, { body: { name: "Ana", kind: "human" } });
+  const closed = await s.req("POST", `/api/rooms/${room.code}/close`, { body: { name: "Ana", summary: "Agreed on --format json." } });
   assert.equal(closed.status, 200);
   const got = await s.req("GET", `/api/rooms/${room.code}`);
   assert.equal(got.data.room.status, "closed");

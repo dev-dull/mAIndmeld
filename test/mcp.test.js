@@ -46,7 +46,7 @@ test("initialize negotiates a protocol version and advertises tools", async () =
 
   const list = await rpc("tools/list");
   const names = list.data.result.tools.map((t) => t.name);
-  assert.deepEqual(names, ["room_create", "room_join", "room_send", "room_listen", "room_invite", "room_status", "room_leave", "room_list"]);
+  assert.deepEqual(names, ["room_create", "room_join", "room_send", "room_listen", "room_invite", "room_motion", "room_vote", "room_status", "room_leave", "room_list"]);
   for (const t of list.data.result.tools) assert.equal(t.inputSchema.type, "object");
 
   const ping = await rpc("ping");
@@ -120,9 +120,30 @@ test("two agents and a human meet through the tools", async () => {
   const after = await s.req("GET", `/api/rooms/${code}`);
   assert.ok(!after.data.room.participants.some((p) => p.name === "consumer-app"));
 
-  await s.req("POST", `/api/rooms/${code}/close`, { body: { summary: "Agreed." } });
+  await s.req("POST", `/api/rooms/${code}/close`, { body: { name: "Ana", summary: "Agreed." } });
   const closedListen = await call("room_listen", { code, name: "tool-builder", wait: 1 });
   assert.equal(closedListen.structuredContent.next, "leave");
+});
+
+test("motions through the tools: a listen delivers, send is refused until the vote, close carries", async () => {
+  const created = await call("room_create", { title: "Motion room", name: "alpha" });
+  const code = created.structuredContent.code;
+  await call("room_join", { code, name: "beta" });
+  const filed = await call("room_motion", { code, type: "close", summary: "We are done.", name: "alpha" });
+  assert.match(filed.content[0].text, /Filed motion #1 \(close\)\. Waiting on: beta\./);
+
+  const heard = await call("room_listen", { code, name: "beta", wait: 1 });
+  assert.equal(heard.structuredContent.next, "vote");
+  assert.match(heard.content[0].text, /YOU HAVE NOT VOTED/);
+  const refused = await call("room_send", { code, name: "beta", content: "one more thing", then_listen: false });
+  assert.equal(refused.isError, true);
+  assert.match(refused.content[0].text, /vote on motion #1/);
+
+  const voted = await call("room_vote", { code, motion_id: 1, vote: "yes", name: "beta" });
+  assert.match(voted.content[0].text, /Motion carried \(votes\)/);
+  assert.equal(voted.structuredContent.next, "leave");
+  const status = await call("room_status", { code });
+  assert.equal(status.structuredContent.status, "closed");
 });
 
 test("tool errors come back as isError results, not transport failures", async () => {

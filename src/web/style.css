@@ -102,6 +102,20 @@ label { font-size: 0.85rem; color: var(--muted); display: grid; gap: 0.25rem; }
 .conversation { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; }
 .objective { background: var(--tint); border-radius: 8px; padding: 0.6rem 0.9rem; font-size: 0.95rem; margin-bottom: 0.75rem; }
 .banner { background: var(--warn-tint); border-left: 4px solid var(--warn); padding: 0.5rem 0.9rem; margin-bottom: 0.75rem; }
+.banner.held { background: var(--tint); border-left-color: var(--accent); }
+.motion { display: grid; gap: 0.35rem; font-size: 0.9rem; }
+.motion + .motion { border-top: 1px solid var(--line); padding-top: 0.5rem; margin-top: 0.5rem; }
+.motion .head { font-weight: 600; }
+.motion .reason { color: var(--muted); }
+.motion .tally { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.motion .voter { font-size: 0.75rem; padding: 0.05rem 0.4rem; border-radius: 3px; border: 1px solid var(--line); }
+.motion .voter.yes { color: #2f9e5f; border-color: #2f9e5f; }
+.motion .voter.no { color: #b3261e; border-color: #b3261e; }
+.motion .voter.pending { color: var(--warn); border-color: var(--warn); }
+.motion .clock { color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.motion .buttons { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.motion .buttons button { font-size: 0.8rem; padding: 0.2rem 0.5rem; }
+.person button.small { margin-left: auto; font-size: 0.7rem; padding: 0.1rem 0.4rem; }
 .transcript { overflow-y: auto; min-height: 0; padding-right: 0.25rem; }
 .msg { display: grid; grid-template-columns: 2.2rem 1fr; gap: 0.6rem; padding: 0.4rem 0; }
 .msg .avatar {

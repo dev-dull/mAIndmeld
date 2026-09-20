@@ -26,7 +26,8 @@ function fakeEndpoint() {
     }
     if (mode === "slow") await new Promise((r) => setTimeout(r, 400));
     const last = [...parsed.messages].reverse().find((m) => m.role === "user");
-    const content = mode === "pass" ? "[pass]" : `echo: ${last.content.split("\n").at(-1)}`;
+    const isVote = /Should a human be called\?/.test(last.content);
+    const content = isVote ? (mode === "voteno" ? "no\nWe can settle this ourselves." : "yes\nThis needs a person.") : mode === "pass" ? "[pass]" : `echo: ${last.content.split("\n").at(-1)}`;
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ model: parsed.model, choices: [{ message: { role: "assistant", content } }], usage: { total_tokens: 1 } }));
   });
@@ -154,7 +155,19 @@ test("a model participant joins a room, answers others, passes when told, and st
     assert.equal(health.data.models[0].replies, 1);
     assert.ok(health.data.models[0].latency_ms.p50 >= 0);
 
-    await api("POST", `/api/rooms/${code}/close`, { summary: "done" });
+    // A call-a-human motion: the model is asked and votes through the endpoint.
+    fake.setMode("voteno");
+    const filed = await api("POST", `/api/rooms/${code}/motions`, { type: "call_human", reason: "billing decision", name: "test" });
+    assert.equal(filed.status, 201);
+    room = await waitFor((r) => r.motions[0].votes.Echo !== undefined);
+    assert.equal(room.motions[0].votes.Echo, "no");
+    assert.equal(room.motions[0].status, "carried", "one yes (proposer) and one no is a tie, which carries");
+    assert.equal(room.human_required, true);
+    assert.match(room.messages.find((m) => /Echo voted no/.test(m.content)).content, /settle this ourselves/);
+    fake.setMode("echo");
+
+    await api("POST", `/api/rooms/${code}/join`, { name: "Ana", kind: "human" });
+    await api("POST", `/api/rooms/${code}/close`, { name: "Ana", summary: "done" });
     await new Promise((r) => setTimeout(r, 300));
     const after = await api("GET", "/api/health");
     assert.equal(after.data.models.length, 0, "model participants stop when the room closes");

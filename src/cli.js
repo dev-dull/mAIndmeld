@@ -26,6 +26,14 @@ Rooms
   invite CODE --human           flag the room as needing a human
   invite CODE                   print the invitation text for another session
 
+Motions (the CLI acts as the configured human unless --as NAME is given)
+  motion CODE close|call_human ["text"]   file a motion as --as NAME (an agent)
+  vote CODE ID yes|no ["reason"] --as NAME
+  override CODE ID carry|cancel ["reason"]
+  wait CODE [--for NAME|ingest] [--seconds N]
+  hold CODE pause|resume
+  human CODE acknowledge|dismiss
+
 Administration
   token create NAME | list | revoke NAME
   config show                   effective configuration, secrets masked
@@ -222,6 +230,61 @@ class Cli {
     }
   }
 
+  // ---- motions and human powers; the CLI acts as the configured human ----
+
+  async asHuman(code) {
+    await this.api("POST", `/api/rooms/${code}/join`, { name: this.config.humanName, kind: "human", client: "cli" });
+    return this.config.humanName;
+  }
+
+  async motion(code, type, text) {
+    if (!code || !type) throw new Error('usage: maindmeld motion CODE close|call_human ["reason or summary"] [--as NAME]');
+    const c = code.toUpperCase();
+    const body = { type, name: this.flags.as || this.config.humanName };
+    if (type === "close") body.summary = text;
+    else body.reason = text;
+    const { motion, existing } = await this.api("POST", `/api/rooms/${c}/motions`, body);
+    this.io.out(`${existing ? "already open" : "filed"}: motion #${motion.id} (${motion.type}) ${motion.status}; waiting on ${motion.tally.pending.join(", ") || "nobody"}`);
+  }
+
+  async vote(code, id, vote, reason) {
+    if (!code || !id || !vote) throw new Error('usage: maindmeld vote CODE ID yes|no ["reason"] --as NAME');
+    const { motion } = await this.api("POST", `/api/rooms/${code.toUpperCase()}/motions/${id}/vote`, { vote, reason, name: this.flags.as || this.config.humanName });
+    this.io.out(`motion #${motion.id} is ${motion.status}; ${motion.tally.yes} yes, ${motion.tally.no} no, waiting on ${motion.tally.pending.join(", ") || "nobody"}`);
+  }
+
+  async override(code, id, outcome, reason) {
+    if (!code || !id || !outcome) throw new Error('usage: maindmeld override CODE ID carry|cancel ["reason"]');
+    const c = code.toUpperCase();
+    const name = await this.asHuman(c);
+    const { motion } = await this.api("POST", `/api/rooms/${c}/motions/${id}/override`, { outcome, reason, name });
+    this.io.out(`motion #${motion.id} ${motion.status} (${motion.outcome.how})`);
+  }
+
+  async wait(code, flags) {
+    if (!code) throw new Error("usage: maindmeld wait CODE [--for NAME|ingest] [--seconds N]");
+    const c = code.toUpperCase();
+    const name = await this.asHuman(c);
+    const r = await this.api("POST", `/api/rooms/${c}/wait`, { name, for: typeof flags.for === "string" ? flags.for : undefined, seconds: flags.seconds });
+    this.io.out(`waiting ${r.seconds}s${r.target ? ` for ${r.target}` : ""}`);
+  }
+
+  async hold(code, action) {
+    if (!code || !["pause", "resume"].includes(action)) throw new Error("usage: maindmeld hold CODE pause|resume");
+    const c = code.toUpperCase();
+    const name = await this.asHuman(c);
+    const r = await this.api("POST", `/api/rooms/${c}/hold`, { name, action });
+    this.io.out(r.held ? `held by ${r.held.by}` : "resumed");
+  }
+
+  async human(code, action) {
+    if (!code || !["acknowledge", "dismiss"].includes(action)) throw new Error("usage: maindmeld human CODE acknowledge|dismiss");
+    const c = code.toUpperCase();
+    const name = await this.asHuman(c);
+    const r = await this.api("POST", `/api/rooms/${c}/human`, { name, action });
+    this.io.out(r.human_required ? "acknowledged; the room still counts you as needed" : "dismissed; the room may close without a human");
+  }
+
   async token(action, name) {
     const auth = new Auth(new Store(this.config.dataDir));
     if (action === "create") {
@@ -251,6 +314,7 @@ export async function run(argv = process.argv.slice(2)) {
   }
   const config = loadConfig({ dataDir: flags["data-dir"], port: flags.port, bind: flags.bind });
   const cli = new Cli(config);
+  cli.flags = flags;
   const commands = {
     serve: () => cli.serve(),
     start: () => cli.start(),
@@ -260,6 +324,12 @@ export async function run(argv = process.argv.slice(2)) {
     rooms: () => cli.rooms(),
     say: () => cli.say(args[0], args.slice(1).join(" ")),
     invite: () => cli.invite(args[0], flags),
+    motion: () => cli.motion(args[0], args[1], args.slice(2).join(" ")),
+    vote: () => cli.vote(args[0], args[1], args[2], args.slice(3).join(" ")),
+    override: () => cli.override(args[0], args[1], args[2], args.slice(3).join(" ")),
+    wait: () => cli.wait(args[0], flags),
+    hold: () => cli.hold(args[0], args[1]),
+    human: () => cli.human(args[0], args[1]),
     token: () => cli.token(args[0], args[1]),
     config: () => (args[0] === "show" ? cli.configShow() : Promise.reject(new Error("usage: maindmeld config show"))),
   };

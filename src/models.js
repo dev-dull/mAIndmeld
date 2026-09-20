@@ -144,9 +144,21 @@ export class ModelParticipant {
     };
   }
 
+  suspendUnavailable(ms) {
+    this.pausedUntil = 0;
+    this.suspendedUntil = Date.now() + ms;
+  }
+
   onEvent(event) {
     if (this.stopped) return;
     if (event.type === "room" && event.room?.status && event.room.status !== "open") return this.stop();
+    if (event.type === "motion" && event.action === "filed" && event.motion?.type === "call_human") {
+      const mine = (event.motion.eligible || []).some((n) => n.toLowerCase() === this.name.toLowerCase());
+      if (mine && event.motion.proposer.toLowerCase() !== this.name.toLowerCase()) {
+        this.voteOn(event.motion).catch((e) => this.hooks.log(`model ${this.name} vote: ${e.message}`));
+      }
+      return;
+    }
     if (event.type !== "message") return;
     const m = event.message;
     if (!m || m.kind === "system" || m.kind === "summary") return;
@@ -163,9 +175,32 @@ export class ModelParticipant {
     this.timer = setTimeout(() => this.reply().catch((e) => this.hooks.log(`model ${this.name}: ${e.message}`)), DEBOUNCE_MS);
   }
 
+  /** A call-a-human motion was filed and this model is a voter. Decide yes or no. */
+  async voteOn(motion) {
+    if (this.stopped) return;
+    const room = this.hooks.loadRoom(this.code);
+    if (!room) return;
+    const tail = room.messages.slice(-12).filter((m) => m.kind !== "system").map((m) => `${m.sender} (${m.kind}): ${m.content}`).join("\n");
+    const turns = [
+      { role: "system", content: `You are ${this.name}, a participant in a meeting room. Answer with "yes" or "no" on the first line and one sentence of reasoning on the second line. Nothing else.` },
+      { role: "user", content: `${motion.proposer} moved to call a human into the room. Reason: ${motion.reason}\n\nRecent discussion:\n${tail || "(none)"}\n\nShould a human be called? Vote yes if the decision is outside the participants' authority, if participants disagree after two rounds, if information only a person has is needed, or if an action is irreversible. Otherwise vote no.` },
+    ];
+    let vote = "yes";
+    let reason = "could not reach the model; defaulting to calling a human";
+    try {
+      const { text } = await this.client.complete(turns, { maxTokens: 80, temperature: 0 });
+      const [first, ...rest] = text.split("\n");
+      vote = /^\s*no\b/i.test(first) ? "no" : "yes";
+      reason = (rest.join(" ").trim() || first).slice(0, 300);
+    } catch (error) {
+      this.hooks.log(`model ${this.name} in ${this.code}: vote fell back to yes: ${error.message}`);
+    }
+    await this.hooks.vote(this.code, this.name, motion.id, vote, reason);
+  }
+
   async reply() {
     if (this.stopped || this.busy) return;
-    if (Date.now() < this.pausedUntil) return;
+    if (Date.now() < this.pausedUntil && !(this.suspendedUntil > Date.now())) return;
     const room = this.hooks.loadRoom(this.code);
     if (!room || room.status !== "open") return this.stop();
     if (!room.participants.some((p) => p.name.toLowerCase() === this.name.toLowerCase())) return this.stop();

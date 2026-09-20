@@ -1,7 +1,9 @@
 # mAIndmeld design
 
 Status: draft 4, 2026-09-20. Reviewed by the author and checked by
-dubber-ruck in plan mode. Section 17 records the questions that were open
+dubber-ruck in plan mode. Implementation status: milestones 1 to 3 built
+(server, web UI, CLI, MCP, model participants, deployment, motions and
+human powers); milestones 4 to 6 pending. Section 17 records the questions that were open
 during drafting and how each was settled, so the reasoning outlives the
 drafts.
 

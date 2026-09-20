@@ -20,7 +20,8 @@
     <section class="conversation">
       <div>
         <div class="objective" id="objective"></div>
-        <div class="banner hidden" id="banner">The agents voted that they need a person here. Join to acknowledge.</div>
+        <div class="banner hidden" id="banner"></div>
+        <div class="banner held hidden" id="held-banner"></div>
       </div>
       <div class="transcript" id="transcript"></div>
       <form class="composer" id="composer">
@@ -33,12 +34,22 @@
         <h3>In this room</h3>
         <div class="people" id="people"></div>
       </div>
+      <div class="panel-box" id="motion-box">
+        <h3>Motions</h3>
+        <div id="motions"><div class="empty">None open.</div></div>
+      </div>
+      <div class="panel-box actions hidden" id="human-box">
+        <h3>You were called</h3>
+        <button id="ack-btn">I'm here, carry on</button>
+        <button id="dismiss-btn">You don't need me</button>
+      </div>
       <div class="panel-box actions">
         <h3>You</h3>
         <button id="join-btn">Join this room</button>
         <button id="leave-btn" class="hidden">Leave this room</button>
         <button id="invite-btn">Copy invitation</button>
         <button id="mode-btn" class="toggle">Only when addressed: off</button>
+        <button id="hold-btn" class="toggle">Hold the room</button>
       </div>
       <div class="panel-box actions">
         <h3>Close</h3>

@@ -12,8 +12,9 @@ How to take part:
 - Start a room with room_create when a decision involves another session, when you change something another project consumes, or when you need a person. Share the invitation it returns with the other session yourself; the server cannot reach it.
 - After joining, listen. After sending, listen (room_send does both by default). A listen that returns no messages is normal; call it again. Leave only when the room is closed, the objective is settled, or the user says so.
 - Every result ends with a "next" line naming the one action expected of you. Follow it.
-- When a listen carries an open motion you have not voted on, vote before anything else.
-- Ask for a human (room_invite kind "human", or the call_human motion once available) when a decision is outside every participant's authority, when participants disagree after two rounds, or when an action is irreversible.
+- When a listen carries an open motion you have not voted on, vote with room_vote before anything else; the server refuses room_send until you do.
+- To end a meeting, file room_motion type "close" with a proposed summary; it carries when every agent agrees or stays silent past their window, and any "no" cancels it. Humans can veto or carry it directly.
+- Ask for a human with room_motion type "call_human" when a decision is outside every participant's authority, when participants disagree after two rounds, when only a person has the information, or when an action is irreversible. A tie means a human is called. While a called human is absent, close is blocked and what you decide is marked provisional.
 - In "only when addressed" mode, speak only when named with @your-name.
 - Be brief and specific. Address claims and evidence, not identities. Do not repeat what others just said.`;
 
@@ -97,6 +98,38 @@ const TOOLS = [
     },
   },
   {
+    name: "room_motion",
+    description: "File a motion. 'close' proposes ending the meeting (agents only; carries when every agent agrees or stays silent past their window; any no cancels). 'call_human' proposes bringing a person in (agents and models vote; a tie means a human is called).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        code: { type: "string" },
+        type: { type: "string", enum: ["close", "call_human"] },
+        reason: { type: "string", description: "Why a human is needed (required for call_human)." },
+        summary: { type: "string", description: "Closing summary to propose (close only)." },
+        name: { type: "string" },
+      },
+      required: ["code", "type"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "room_vote",
+    description: "Vote on an open motion. Vote before doing anything else in the room; a 'no' needs a one-line reason.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        code: { type: "string" },
+        motion_id: { type: "integer" },
+        vote: { type: "string", enum: ["yes", "no"] },
+        reason: { type: "string" },
+        name: { type: "string" },
+      },
+      required: ["code", "motion_id", "vote"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "room_status",
     description: "Participants, open motions, and human state of a room without reading messages.",
     inputSchema: { type: "object", properties: { code: { type: "string" } }, required: ["code"], additionalProperties: false },
@@ -129,7 +162,7 @@ export function createMcp({ service, version, log }) {
     const a = args && typeof args === "object" ? args : {};
     const me = a.name || principal.name;
     // Clients do not always enforce `required`, so name the missing field.
-    const needs = { room_create: ["title"], room_join: ["code"], room_send: ["code", "content"], room_listen: ["code"], room_invite: ["code", "kind"], room_status: ["code"], room_leave: ["code"] };
+    const needs = { room_create: ["title"], room_join: ["code"], room_send: ["code", "content"], room_listen: ["code"], room_invite: ["code", "kind"], room_status: ["code"], room_leave: ["code"], room_motion: ["code", "type"], room_vote: ["code", "motion_id", "vote"] };
     for (const field of needs[name] || []) {
       if (a[field] === undefined || a[field] === null || a[field] === "") throw new Error(`${field} is required for ${name}`);
     }
@@ -190,6 +223,21 @@ export function createMcp({ service, version, log }) {
         if (kind === "session") return { text: `Deliver this to the other session yourself:\n${r.invitation}\nnext: listen`, data: r };
         if (kind === "model") return { text: `${r.rejoined ? "Already present" : "Joined"}: ${r.participant.name} (${r.participant.profile}).\nnext: listen`, data: r };
         return { text: "The room is now flagged as needing a human. Continue on what does not need them; close is blocked until they arrive or dismiss.\nnext: listen", data: r };
+      }
+      case "room_motion": {
+        const r = await service.motion(principal, a.code, { type: a.type, reason: a.reason, summary: a.summary, name: me });
+        const m = r.motion;
+        const head = r.existing ? `Motion #${m.id} (${m.type}) is already open.` : `Filed motion #${m.id} (${m.type}).`;
+        const state = m.status === "open" ? `Waiting on: ${m.tally.pending.join(", ") || "nobody"}.` : `It ${m.status} at once (${m.outcome.how}).`;
+        const next = m.status === "open" ? "listen" : m.type === "close" && m.status === "carried" ? "leave" : "listen";
+        return { text: `${head} ${state}\nnext: ${next}`, data: { ...r, next } };
+      }
+      case "room_vote": {
+        const r = await service.vote(principal, a.code, a.motion_id, { vote: a.vote, reason: a.reason, name: me });
+        const m = r.motion;
+        const state = m.status === "open" ? `Still waiting on: ${m.tally.pending.join(", ")}.` : `Motion ${m.status} (${m.outcome.how}).`;
+        const next = m.type === "close" && m.status === "carried" ? "leave" : "listen";
+        return { text: `Recorded your ${a.vote} on motion #${m.id}. ${state}\nnext: ${next}`, data: { ...r, next } };
       }
       case "room_status": {
         const s = await service.status(a.code);
@@ -293,9 +341,13 @@ function formatMessage(m) {
 function formatListen(s) {
   const lines = [];
   lines.push(`Room ${s.code} is ${s.status}; mode ${s.response_mode}${s.human_required ? (s.human_present ? "; a human is present" : "; a human has been called and is not here yet") : ""}.`);
+  if (s.held) lines.push(`The room is on hold by ${s.held.by}; nothing resolves until they resume.`);
   if (s.messages.length) lines.push(...s.messages.map(formatMessage));
   else lines.push("No new messages.");
-  for (const m of s.motions_open || []) lines.push(`Open motion #${m.id} (${m.type}) by ${m.proposer}: ${m.reason || m.summary || ""}`);
+  for (const m of s.motions_open || []) {
+    const yours = m.eligible_for_you ? (m.your_vote ? `you voted ${m.your_vote}` : "YOU HAVE NOT VOTED: call room_vote now") : "you are not a voter";
+    lines.push(`Open motion #${m.id} (${m.type}) by ${m.proposer}: ${m.reason || m.summary || "(no text)"} · ${m.tally.yes} yes, ${m.tally.no} no, waiting on ${m.tally.pending.join(", ") || "nobody"} · ${yours}`);
+  }
   lines.push(`next: ${s.next}`);
   return lines.join("\n");
 }

@@ -15,6 +15,7 @@ import { Auth } from "./auth.js";
 import { RoomEvents } from "./events.js";
 import { ModelParticipant } from "./models.js";
 import { createMcp } from "./mcp.js";
+import { createNotifier } from "./notify.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const VERSION = JSON.parse(fs.readFileSync(path.join(here, "..", "package.json"), "utf8")).version;
@@ -136,6 +137,48 @@ export function createApp(config = loadConfig()) {
     return room;
   };
 
+  /** withRoom, plus publish every message the mutation appended. */
+  async function mutateAndPublish(code, fn) {
+    const { result, added, room } = await withRoom(code, (room) => {
+      const start = room.messages.length;
+      const result = fn(room);
+      return { result, added: room.messages.slice(start), room };
+    });
+    for (const m of added) events.notify(code, { type: "message", message: m });
+    return { result, room };
+  }
+
+  /**
+   * The human acting on a room. A browser session qualifies under its display
+   * name; a token qualifies only if the named participant is a human, which
+   * keeps the CLI's join-as-human flows working. DESIGN.md 6.4.
+   */
+  function actingHuman(room, principal, name) {
+    if (principal.kind === "session") return principal.name;
+    const n = name || principal.name;
+    const p = rooms.findParticipant(room, n);
+    if (p && p.kind === "human") return p.name;
+    throw new HttpError(403, `only a human may do this; ${n} is not a human participant of ${room.code}`);
+  }
+
+  const notifier = createNotifier(config, log);
+  const motionRooms = new Set(); // rooms with an open motion, for the scheduler
+
+  function afterMotion(code, motion, action, room) {
+    events.notify(code, { type: "motion", action, motion: rooms.motionView(motion, null) });
+    if (motion.status === "open") {
+      motionRooms.add(code);
+      return;
+    }
+    if (action !== "resolved") events.notify(code, { type: "motion", action: "resolved", motion: rooms.motionView(motion, null) });
+    if (!rooms.openMotions(room).length) motionRooms.delete(code);
+    events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
+    log(`motion #${motion.id} (${motion.type}) in ${code} ${motion.status} ${motion.outcome?.how}`);
+    if (motion.status === "carried" && motion.type === "call_human") {
+      notifier.humanNeeded(room, motion.reason, "human_called").catch(() => {});
+    }
+  }
+
   // ---- model participants ----
 
   const modelHooks = {
@@ -149,6 +192,10 @@ export function createApp(config = loadConfig()) {
     async system(code, text) {
       const message = await withRoom(code, (room) => rooms.addSystemMessage(room, text));
       events.notify(code, { type: "message", message });
+    },
+    async vote(code, name, id, vote, reason) {
+      const { result: motion, room } = await mutateAndPublish(code, (room) => rooms.castVote(room, id, { name, vote, reason }));
+      afterMotion(code, motion, "voted", room);
     },
   };
 
@@ -178,6 +225,7 @@ export function createApp(config = loadConfig()) {
         room = null;
       }
       if (!room) throw new HttpError(500, "could not allocate a room code");
+      room.clock_config = { ...config.clocks };
       store.saveRoom(room);
       events.notify(room.code, { type: "room", room: rooms.summarizeRoom(room) });
       log(`room ${room.code} created by ${room.created_by.name} (${room.created_by.kind})`);
@@ -245,13 +293,15 @@ export function createApp(config = loadConfig()) {
       // motion, or the room closing. System lines alone (joins, leaves) are
       // returned with the next real event or at the deadline, so an agent
       // in a listen loop is not spun up for every arrival.
-      const worthWaking = (room, messages) =>
-        room.status !== "open" || messages.some((m) => m.kind !== "system") || room.motions.some((m) => m.status === "open");
+      const awaitingVote = (room, participant) =>
+        Boolean(participant) && rooms.openMotions(room).some((m) => m.eligible.some((n) => n.toLowerCase() === participant.name.toLowerCase()) && m.votes[participant.name] === undefined && !m.votes[m.eligible.find((n) => n.toLowerCase() === participant.name.toLowerCase())]);
+      const worthWaking = (room, messages, participant) =>
+        room.status !== "open" || messages.some((m) => m.kind !== "system") || awaitingVote(room, participant);
 
       let room = loadOr404(code);
       let { participant, messages } = snapshot(room);
       const deadline = Date.now() + maxWait * 1000;
-      while (!worthWaking(room, messages) && Date.now() < deadline) {
+      while (!worthWaking(room, messages, participant) && Date.now() < deadline) {
         await events.waitForChange(code, Math.ceil((deadline - Date.now()) / 1000));
         room = loadOr404(code);
         ({ participant, messages } = snapshot(room));
@@ -260,26 +310,32 @@ export function createApp(config = loadConfig()) {
       let cursor = explicitAfter ?? 0;
       if (participant) {
         cursor = room.next_message_id - 1;
-        await withRoom(code, (r) => {
+        // Returning this response is what delivers any open motion to the
+        // participant, so their vote window starts now.
+        const delivered = await withRoom(code, (r) => {
           const p = rooms.findParticipant(r, participant.name);
-          if (p) {
-            p.cursor = Math.max(p.cursor, cursor);
-            p.last_seen_at = rooms.now();
-          }
+          if (!p) return [];
+          p.cursor = Math.max(p.cursor, cursor);
+          p.last_seen_at = rooms.now();
+          return rooms.deliverMotions(r, p.name);
         });
+        for (const m of delivered) events.notify(code, { type: "motion", action: "delivered", motion: rooms.motionView(m, null), to: participant.name });
+        if (delivered.length) room = loadOr404(code);
       } else if (messages.length) {
         cursor = messages.at(-1).id;
       }
 
-      const next = room.status !== "open" ? "leave" : messages.some((m) => m.kind !== "system") ? "reply" : "listen";
+      const pending = participant ? rooms.pendingVoteFor(room, participant.name) : null;
+      const next = room.status !== "open" ? "leave" : pending ? "vote" : messages.some((m) => m.kind !== "system") ? "reply" : "listen";
       return {
         code,
         status: room.status,
         response_mode: room.response_mode,
         human_required: room.human_required,
         human_present: room.human_present,
+        held: room.held,
         participants: room.participants.map(({ name: n, kind, last_seen_at }) => ({ name: n, kind, last_seen_at })),
-        motions_open: room.motions.filter((m) => m.status === "open"),
+        motions_open: rooms.openMotions(room).map((m) => rooms.motionView(m, participant?.name ?? null)),
         messages,
         cursor,
         next,
@@ -296,19 +352,106 @@ export function createApp(config = loadConfig()) {
       return changed;
     },
 
+    /** Direct close is a human power; agents file the close motion. */
     async close(principal, code, body) {
-      // Milestone 1: any principal may close directly. Milestone 3 restricts
-      // direct close to humans and gives agents the close motion.
-      const changed = await withRoom(code, (room) =>
-        rooms.closeRoom(room, { by: body.name || principal.name, kind: principalKind(principal), summary: body.summary, how: "direct" }),
-      );
+      const { result: changed, room } = await mutateAndPublish(code, (room) => {
+        const by = actingHuman(room, principal, body.name);
+        return rooms.closeRoom(room, { by, kind: "human", summary: body.summary, how: "direct" });
+      });
       if (changed) {
-        const room = store.loadRoom(code);
+        motionRooms.delete(code);
         events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
-        events.notify(code, { type: "message", message: room.messages.at(-1) });
         log(`room ${code} closed by ${principal.name}`);
       }
       return changed;
+    },
+
+    // ---- motions and human powers (DESIGN.md 6) ----
+
+    async motions(code) {
+      const room = loadOr404(code);
+      return {
+        open: rooms.openMotions(room).map((m) => rooms.motionView(m, null)),
+        recent: room.motions.filter((m) => m.status !== "open").slice(-5).map((m) => rooms.motionView(m, null)),
+      };
+    },
+
+    async motion(principal, code, body) {
+      const me = body.name || principal.name;
+      const { result, room } = await mutateAndPublish(code, (room) =>
+        rooms.fileMotion(room, { type: body.type, proposer: me, reason: body.reason, summary: body.summary }),
+      );
+      if (!result.existing) afterMotion(code, result.motion, "filed", room);
+      return { motion: rooms.motionView(result.motion, me), existing: result.existing };
+    },
+
+    async vote(principal, code, id, body) {
+      const me = body.name || principal.name;
+      const { result: motion, room } = await mutateAndPublish(code, (room) => rooms.castVote(room, id, { name: me, vote: body.vote, reason: body.reason }));
+      afterMotion(code, motion, "voted", room);
+      return { motion: rooms.motionView(motion, me) };
+    },
+
+    async override(principal, code, id, body) {
+      const { result: motion, room } = await mutateAndPublish(code, (room) =>
+        rooms.overrideMotion(room, id, { by: actingHuman(room, principal, body.name), outcome: body.outcome, reason: body.reason }),
+      );
+      afterMotion(code, motion, "resolved", room);
+      return { motion: rooms.motionView(motion, null) };
+    },
+
+    async wait(principal, code, body) {
+      const { result, room } = await mutateAndPublish(code, (room) =>
+        rooms.waitRoom(room, { by: actingHuman(room, principal, body.name), target: body.for, seconds: body.seconds }),
+      );
+      if (result.target && result.target !== "ingest") {
+        const mp = models.get(`${code}:${result.target.toLowerCase()}`);
+        if (mp) mp.suspendUnavailable(result.seconds * 1000);
+      }
+      events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
+      return result;
+    },
+
+    async hold(principal, code, body) {
+      const action = String(body.action ?? "");
+      if (action !== "pause" && action !== "resume") throw new HttpError(400, "action must be pause or resume");
+      const { result, room } = await mutateAndPublish(code, (room) => {
+        const by = actingHuman(room, principal, body.name);
+        return action === "pause" ? rooms.holdRoom(room, by) : rooms.resumeRoom(room, by);
+      });
+      events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
+      return { held: room.held, result };
+    },
+
+    async human(principal, code, body) {
+      const { result, room } = await mutateAndPublish(code, (room) =>
+        rooms.humanAction(room, { name: actingHuman(room, principal, body.name), action: body.action }),
+      );
+      events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
+      return result;
+    },
+
+    /** Resolve expired motions in every room that has one. Run by the scheduler and on demand. */
+    async tick() {
+      const resolved = [];
+      for (const code of [...motionRooms]) {
+        try {
+          const { result, room } = await mutateAndPublish(code, (room) => {
+            const done = [];
+            for (const m of rooms.openMotions(room)) if (rooms.evaluate(room, m.id)) done.push(m);
+            return done;
+          });
+          for (const m of result) {
+            afterMotion(code, m, "resolved", room);
+            resolved.push({ code, id: m.id, status: m.status, how: m.outcome.how });
+          }
+          if (!rooms.openMotions(room).length) motionRooms.delete(code);
+        } catch (error) {
+          log(`tick ${code}: ${error.message}`);
+          motionRooms.delete(code);
+        }
+      }
+      return resolved;
     },
 
     async invite(principal, code, body) {
@@ -329,17 +472,16 @@ export function createApp(config = loadConfig()) {
         return { participant: mp.status(), rejoined: false };
       }
       if (kind === "human") {
-        const changed = await withRoom(code, (room) => {
+        const { result: changed, room } = await mutateAndPublish(code, (room) => {
           if (room.status !== "open") throw new HttpError(409, `room ${code} is ${room.status}`);
           if (room.human_required) return false;
           room.human_required = true;
-          rooms.addSystemMessage(room, `${principal.name} asked for a human to join.${body.reason ? ` Reason: ${body.reason}` : ""}`);
+          rooms.addSystemMessage(room, `${principal.name} asked for a human to join.${body.reason ? ` Reason: ${body.reason}` : ""}`, { action: "human_called", reason: body.reason || null });
           return true;
         });
         if (changed) {
-          const room = store.loadRoom(code);
           events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
-          events.notify(code, { type: "message", message: room.messages.at(-1) });
+          notifier.humanNeeded(room, body.reason, "invited").catch(() => {});
         }
         return { ok: true, human_required: true };
       }
@@ -394,6 +536,9 @@ export function createApp(config = loadConfig()) {
       events: events.counts(),
       models: modelStatuses(),
       profiles: Object.keys(config.profiles),
+      scheduler: { rooms_with_motions: motionRooms.size },
+      notifiers: notifier.targets,
+      clocks: { window_seconds: config.clocks.window_ms / 1000, hard_seconds: config.clocks.hard_ms / 1000 },
       mcp: { endpoint: `${config.publicOrigin}/mcp`, protocol_versions: mcp.tools ? ["2025-11-25", "2025-06-18", "2025-03-26"] : [] },
       public_origin: config.publicOrigin,
     };
@@ -413,7 +558,7 @@ export function createApp(config = loadConfig()) {
   }
 
   async function handleApi(req, res, url, parts) {
-    const [, head, code, sub] = parts;
+    const [, head, code, sub, id, verb] = parts;
 
     if (head === "health" && req.method === "GET") return send(res, 200, health());
 
@@ -475,10 +620,27 @@ export function createApp(config = loadConfig()) {
       return send(res, 200, state);
     }
 
+    if (sub === "motions" && req.method === "GET") return send(res, 200, await service.motions(code));
+
     if (req.method !== "POST") throw new HttpError(405, "method not allowed");
     const body = await readBody(req);
 
+    if (sub === "motions" && id !== undefined) {
+      if (verb === "vote") return send(res, 200, await service.vote(principal, code, id, body));
+      if (verb === "override") return send(res, 200, await service.override(principal, code, id, body));
+      if (verb === "veto") return send(res, 200, await service.override(principal, code, id, { ...body, outcome: "cancel" }));
+      throw new HttpError(404, "not found");
+    }
+
     switch (sub) {
+      case "motions":
+        return send(res, 201, await service.motion(principal, code, body));
+      case "wait":
+        return send(res, 200, await service.wait(principal, code, body));
+      case "hold":
+        return send(res, 200, await service.hold(principal, code, body));
+      case "human":
+        return send(res, 200, await service.human(principal, code, body));
       case "join": {
         const r = await service.join(principal, code, body);
         return send(res, 200, r);
@@ -581,6 +743,9 @@ export function createApp(config = loadConfig()) {
     start() {
       for (const w of config.warnings || []) log(`warning: ${w}`);
       bootstrapToken();
+      for (const room of store.listRooms()) if (room.status === "open" && rooms.openMotions(room).length) motionRooms.add(room.code);
+      this.timer = setInterval(() => service.tick().catch((e) => log(`tick: ${e.message}`)), 5000);
+      this.timer.unref();
       return new Promise((resolve, reject) => {
         server.once("error", reject);
         server.listen(config.port, config.bind, () => {
@@ -599,6 +764,7 @@ export function createApp(config = loadConfig()) {
       });
     },
     stop() {
+      clearInterval(this.timer);
       for (const mp of models.values()) mp.stop();
       models.clear();
       for (const set of events.subscribers.values()) for (const res of set) res.end();

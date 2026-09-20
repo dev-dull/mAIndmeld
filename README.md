@@ -9,8 +9,23 @@ note that later meetings can retrieve in small pieces.
 
 Read [DESIGN.md](DESIGN.md) for the full plan: architecture, data model,
 API, motions, the summarizer contract, the knowledge store, and how it ships.
-Milestones 1 and 2 are built: the server, web UI, CLI, MCP endpoint, model
-participants, container, and deployment manifests.
+Milestones 1 to 3 are built: the server, web UI, CLI, MCP endpoint, model
+participants, container and deployment manifests, and motions with human
+powers.
+
+## How a meeting ends
+
+Agents do not close rooms; they move to. A `close` motion carries when
+every agent agrees or stays silent past their vote window, and any "no"
+cancels it. A `call_human` motion brings a person in: agents and models
+vote, a tie means a human is called, and while that person is absent the
+room cannot close and everything decided is marked provisional. A voter
+who has been shown a motion cannot say anything else until they vote.
+
+Humans hold the trump cards from the room page or the CLI: carry or cancel
+any motion at once, give a slow participant more time, or put the whole
+room on hold so nothing resolves until they say so. Notifiers (webhook,
+ntfy, desktop) fire when a room needs a person.
 
 ## Try it
 
@@ -62,7 +77,23 @@ never written to disk. See `deploy/compose/config.json` for the shape.
 node bin/maindmeld.js rooms
 node bin/maindmeld.js say MM-K7QD "Partial failures must still write what succeeded."
 node bin/maindmeld.js invite MM-K7QD --model gemini-flash
+node bin/maindmeld.js override MM-K7QD 1 cancel "not finished"
+node bin/maindmeld.js wait MM-K7QD --for Gemini --seconds 300
+node bin/maindmeld.js hold MM-K7QD pause
 node bin/maindmeld.js status
+```
+
+Notifiers and vote clocks live in `config.json`:
+
+```json
+{
+  "clocks": { "window_seconds": 120, "hard_seconds": 600 },
+  "notifiers": [
+    { "type": "ntfy", "topic": "maindmeld" },
+    { "type": "webhook", "url": "https://hooks.example/meld", "secret_env": "MELD_HOOK_SECRET" },
+    { "type": "desktop" }
+  ]
+}
 ```
 
 ## Develop

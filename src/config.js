@@ -102,12 +102,30 @@ export function loadConfig(overrides = {}, env = process.env) {
     };
   }
 
+  const clocksFile = file.clocks && typeof file.clocks === "object" ? file.clocks : {};
+  const clocks = {
+    window_ms: intFrom(clocksFile.window_seconds, 120, "clocks.window_seconds") * 1000,
+    hard_ms: intFrom(clocksFile.hard_seconds, 600, "clocks.hard_seconds") * 1000,
+  };
+
+  const notifiers = [];
+  for (const n of Array.isArray(file.notifiers) ? file.notifiers : []) {
+    if (!n || typeof n !== "object" || !n.type) throw new Error("each notifier needs a type");
+    if (n.type === "webhook" && !n.url) throw new Error("webhook notifier needs a url");
+    if (n.type === "ntfy" && !n.topic) throw new Error("ntfy notifier needs a topic");
+    const secret = n.secret_env ? env[n.secret_env] : undefined;
+    const token = n.token_env ? env[n.token_env] : undefined;
+    notifiers.push({ type: String(n.type), url: n.url, topic: n.topic, secret, token });
+  }
+
   return {
     dataDir,
     configFile,
     bind,
     port,
     profiles,
+    clocks,
+    notifiers,
     publicOrigin: configuredOrigin ? configuredOrigin.replace(/\/$/, "") : `http://${isLoopback(bind) ? "127.0.0.1" : "localhost"}:${port}`,
     allowedOrigins: origins,
     warnings,
@@ -129,6 +147,8 @@ export function describeConfig(config) {
     allowed_origins: [...config.allowedOrigins],
     human_name: config.humanName,
     session_days: config.sessionDays,
+    clocks: { window_seconds: config.clocks.window_ms / 1000, hard_seconds: config.clocks.hard_ms / 1000 },
+    notifiers: (config.notifiers || []).map((n) => ({ type: n.type, url: n.url, topic: n.topic, secret_set: Boolean(n.secret), token_set: Boolean(n.token) })),
     profiles: Object.fromEntries(Object.entries(config.profiles || {}).map(([k, p]) => [k, {
       base_url: p.baseUrl,
       model: p.model,

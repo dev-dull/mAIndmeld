@@ -96,12 +96,23 @@ function initLobby() {
   const es = new EventSource("/api/events");
   let pending = null;
   es.onmessage = es.onerror = null;
-  for (const type of ["room", "message", "participant"]) {
+  for (const type of ["room", "message", "participant", "motion"]) {
     es.addEventListener(type, () => {
       clearTimeout(pending);
       pending = setTimeout(() => renderLobby().catch(() => {}), 250);
     });
   }
+  // A person is being called: say so even when the tab is in the background.
+  if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {});
+  es.addEventListener("message", (e) => {
+    const { code, message } = JSON.parse(e.data);
+    if (message?.data?.action !== "human_called") return;
+    if ("Notification" in window && Notification.permission === "granted") {
+      const n = new Notification("mAIndmeld: a room needs you", { body: `${code}: ${message.data.reason || message.content}` });
+      n.onclick = () => window.open(`/rooms/${code}`, "_blank");
+    }
+    toast(`Room ${code} needs a human`);
+  });
   $("#create-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     try {
@@ -139,6 +150,55 @@ function renderMessage(m) {
   if (atBottom) t.scrollTop = t.scrollHeight;
 }
 
+const countdown = (iso) => {
+  const s = Math.round((Date.parse(iso) - Date.now()) / 1000);
+  if (s <= 0) return "now";
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+};
+
+function renderMotions(room) {
+  const open = (room.motions || []).filter((m) => m.status === "open");
+  const el = $("#motions");
+  if (!open.length) {
+    el.innerHTML = '<div class="empty">None open.</div>';
+    return;
+  }
+  el.innerHTML = open.map((m) => {
+    const voters = m.eligible.map((n) => {
+      const v = m.votes[n];
+      const cls = v || (m.delivered_to[n] ? "pending" : "");
+      const label = v ? `${n}: ${v}` : m.delivered_to[n] ? `${n}: waiting (${countdown(m.windows[n])})` : `${n}: not yet delivered`;
+      return `<span class="voter ${cls}">${esc(label)}</span>`;
+    }).join("");
+    const what = m.type === "close" ? "Close the meeting" : "Call a human";
+    const text = m.type === "close" ? m.summary : m.reason;
+    return `<div class="motion" data-id="${m.id}">
+      <div class="head">#${m.id} ${what} · by ${esc(m.proposer)}</div>
+      ${text ? `<div class="reason">${esc(text)}</div>` : ""}
+      <div class="tally">${voters}</div>
+      <div class="clock">${room.held ? "on hold" : `hard deadline in ${countdown(m.hard_deadline)}`}</div>
+      <div class="buttons">
+        <button data-act="carry">Carry now</button>
+        <button data-act="cancel" class="danger">${m.type === "close" ? "Veto" : "Cancel"}</button>
+        <button data-act="wait">Wait 5 min</button>
+      </div>
+    </div>`;
+  }).join("");
+  for (const btn of el.querySelectorAll("button[data-act]")) {
+    btn.addEventListener("click", async () => {
+      const id = btn.closest(".motion").dataset.id;
+      const act = btn.dataset.act;
+      try {
+        if (act === "wait") await api("POST", `/api/rooms/${room.code}/wait`, { seconds: 300 });
+        else await api("POST", `/api/rooms/${room.code}/motions/${id}/override`, { outcome: act });
+        toast(act === "wait" ? "Waiting 5 more minutes" : act === "carry" ? "Carried" : "Cancelled");
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+  }
+}
+
 function renderRoomMeta(room) {
   document.title = `${room.title} · mAIndmeld`;
   $("#room-title").textContent = room.title;
@@ -146,24 +206,56 @@ function renderRoomMeta(room) {
   $("#room-status").textContent = room.status;
   $("#objective").textContent = room.objective || "No objective set.";
   $("#objective").classList.toggle("hidden", !room.objective);
-  $("#banner").classList.toggle("hidden", !(room.human_required && !room.human_present));
   const closed = room.status !== "open";
+  const inRoom = room.participants.some((p) => p.name.toLowerCase() === state.me?.name.toLowerCase());
+
+  const banner = $("#banner");
+  if (room.human_required && !room.human_present) {
+    banner.textContent = "The agents voted that they need a person here. Join to be counted as present; then acknowledge or dismiss.";
+    banner.classList.remove("hidden");
+  } else if (room.human_required && room.human_present && !room.human_acknowledged_at) {
+    banner.textContent = "A human was called and you are here. Acknowledge to say so, or dismiss if the agents can carry on alone.";
+    banner.classList.remove("hidden");
+  } else banner.classList.add("hidden");
+  $("#human-box").classList.toggle("hidden", !(room.human_required && inRoom && !closed));
+
+  const held = $("#held-banner");
+  if (room.held) {
+    held.textContent = `On hold by ${room.held.by} since ${timeOf(room.held.since)}. No motion resolves until resumed.`;
+    held.classList.remove("hidden");
+  } else held.classList.add("hidden");
+  $("#hold-btn").classList.toggle("on", Boolean(room.held));
+  $("#hold-btn").textContent = room.held ? "Resume the room" : "Hold the room";
+  $("#hold-btn").disabled = closed;
+
   $("#composer textarea").disabled = closed;
   $("#composer button").disabled = closed;
   $("#close-btn").disabled = closed;
   $("#mode-btn").classList.toggle("on", room.response_mode === "addressed_only");
   $("#mode-btn").textContent = room.response_mode === "addressed_only" ? "Only when addressed: on" : "Only when addressed: off";
   const now = Date.now();
+  const motionOpen = (room.motions || []).some((m) => m.status === "open");
   $("#people").innerHTML = room.participants.length
     ? room.participants.map((p) => {
         const age = now - Date.parse(p.last_seen_at);
         const dot = age < 90_000 ? "live" : age < 600_000 ? "idle" : "";
-        return `<div class="person"><span class="dot ${dot}"></span><span>${esc(p.name)}</span><span class="badge ${p.kind}">${p.kind}</span></div>`;
+        const more = motionOpen && p.kind !== "human" ? `<button class="small" data-more="${esc(p.name)}">give time</button>` : "";
+        return `<div class="person"><span class="dot ${dot}"></span><span>${esc(p.name)}</span><span class="badge ${p.kind}">${p.kind}</span>${more}</div>`;
       }).join("")
     : '<div class="empty">Nobody here.</div>';
-  const inRoom = room.participants.some((p) => p.name.toLowerCase() === state.me?.name.toLowerCase());
+  for (const btn of $("#people").querySelectorAll("button[data-more]")) {
+    btn.addEventListener("click", async () => {
+      try {
+        await api("POST", `/api/rooms/${room.code}/wait`, { for: btn.dataset.more, seconds: 300 });
+        toast(`Gave ${btn.dataset.more} 5 more minutes`);
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+  }
   $("#join-btn").classList.toggle("hidden", inRoom || closed);
   $("#leave-btn").classList.toggle("hidden", !inRoom || closed);
+  renderMotions(room);
 }
 
 async function loadRoom(code) {
@@ -191,7 +283,19 @@ function initRoom() {
   es.addEventListener("message", (e) => renderMessage(JSON.parse(e.data).message));
   es.addEventListener("participant", () => loadRoom(code).catch(() => {}));
   es.addEventListener("room", () => loadRoom(code).catch(() => {}));
-  setInterval(() => state.room && renderRoomMeta(state.room), 30_000);
+  es.addEventListener("motion", () => loadRoom(code).catch(() => {}));
+  setInterval(() => state.room && renderRoomMeta(state.room), 5_000);
+
+  $("#hold-btn").addEventListener("click", async () => {
+    try {
+      await ensureJoined(code);
+      await api("POST", `/api/rooms/${code}/hold`, { action: state.room.held ? "resume" : "pause" });
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+  $("#ack-btn").addEventListener("click", () => api("POST", `/api/rooms/${code}/human`, { action: "acknowledge" }).then(() => toast("Acknowledged")).catch((e) => toast(e.message)));
+  $("#dismiss-btn").addEventListener("click", () => api("POST", `/api/rooms/${code}/human`, { action: "dismiss" }).then(() => toast("Dismissed the call")).catch((e) => toast(e.message)));
 
   $("#composer").addEventListener("submit", async (e) => {
     e.preventDefault();
