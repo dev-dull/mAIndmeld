@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Room · mAIndmeld</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-page="room">
+  <header class="top">
+    <div>
+      <a class="brand" href="/">mAIndmeld</a>
+      &nbsp;·&nbsp; <span id="room-title"></span>
+      <span class="badge status" id="room-status"></span>
+      <code id="room-code"></code>
+    </div>
+    <span class="who" id="who"></span>
+  </header>
+  <main class="room-layout">
+    <section class="conversation">
+      <div>
+        <div class="objective" id="objective"></div>
+        <div class="banner hidden" id="banner">The agents voted that they need a person here. Join to acknowledge.</div>
+      </div>
+      <div class="transcript" id="transcript"></div>
+      <form class="composer" id="composer">
+        <textarea rows="1" placeholder="Say something… (Enter to send, Shift+Enter for a new line)"></textarea>
+        <button class="primary" type="submit">Send</button>
+      </form>
+    </section>
+    <aside class="panel">
+      <div class="panel-box">
+        <h3>In this room</h3>
+        <div class="people" id="people"></div>
+      </div>
+      <div class="panel-box actions">
+        <h3>You</h3>
+        <button id="join-btn">Join this room</button>
+        <button id="leave-btn" class="hidden">Leave this room</button>
+        <button id="invite-btn">Copy invitation</button>
+        <button id="mode-btn" class="toggle">Only when addressed: off</button>
+      </div>
+      <div class="panel-box actions">
+        <h3>Close</h3>
+        <textarea id="close-summary" rows="2" placeholder="Closing summary (optional)"></textarea>
+        <button id="close-btn" class="danger">Close room</button>
+      </div>
+    </aside>
+  </main>
+  <div class="toast" id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

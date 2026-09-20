@@ -202,7 +202,7 @@ both modes and is never "it's only loopback".
   from an agent, the MCP endpoint, or the CLI carries
   `Authorization: Bearer <token>`. Tokens are hashed at rest.
 - **Browser sessions.** A human signs in to the web UI by pasting a token
-  once; the server sets an HttpOnly, SameSite=Strict session cookie and
+  once; the server sets an HttpOnly, SameSite=Lax session cookie and
   the human picks a display name. Mutating requests from the browser must
   carry the cookie and an `Origin` equal to the server's configured public
   origin. A foreign `Origin` is rejected before parsing.

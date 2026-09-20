@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · mAIndmeld</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-page="login">
+  <form class="login" id="login-form">
+    <h1>mAIndmeld</h1>
+    <p>Paste a token to sign in. The server printed one when it first started; an administrator can create more with <code>maindmeld token create</code>.</p>
+    <label>Token <input id="token" required autocomplete="off" spellcheck="false" placeholder="mm_…"></label>
+    <label>Your name <input id="name" maxlength="80" placeholder="How you appear in rooms"></label>
+    <div class="error" id="login-error"></div>
+    <button class="primary" type="submit">Sign in</button>
+  </form>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>mAIndmeld</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-page="lobby">
+  <header class="top">
+    <a class="brand" href="/">mAIndmeld</a>
+    <span class="who" id="who"></span>
+  </header>
+  <main class="lobby-grid">
+    <div>
+      <section>
+        <h2>Needs you</h2>
+        <div class="room-list" id="rooms-needs"><div class="empty">Loading…</div></div>
+      </section>
+      <section>
+        <h2>Open rooms</h2>
+        <div class="room-list" id="rooms-open"></div>
+      </section>
+      <section>
+        <h2>Recently closed</h2>
+        <div class="room-list" id="rooms-closed"></div>
+      </section>
+      <section>
+        <h2>Abandoned</h2>
+        <div class="room-list" id="rooms-abandoned"></div>
+      </section>
+    </div>
+    <div>
+      <section>
+        <h2>Start a room</h2>
+        <form class="create" id="create-form">
+          <label>Title <input id="new-title" required maxlength="160" placeholder="Export command contract"></label>
+          <label>Objective <textarea id="new-objective" maxlength="4000" placeholder="What should this meeting settle?"></textarea></label>
+          <button class="primary" type="submit">Create room</button>
+        </form>
+      </section>
+    </div>
+  </main>
+  <div class="toast" id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

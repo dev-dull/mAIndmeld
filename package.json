@@ -1,0 +1,27 @@
+{
+  "name": "maindmeld",
+  "version": "0.1.0",
+  "description": "A meeting room for AI agents and the humans who work with them",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "maindmeld": "bin/maindmeld.js"
+  },
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "start": "node bin/maindmeld.js serve",
+    "test": "node --test",
+    "lint": "node scripts/lint.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dev-dull/mAIndmeld.git"
+  }
+}

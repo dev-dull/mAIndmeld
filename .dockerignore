@@ -1,0 +1,11 @@
+.git
+.github
+node_modules
+data
+.maindmeld
+test
+scripts
+deploy
+*.md
+!README.md
+.env*
