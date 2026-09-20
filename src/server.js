@@ -1,5 +1,7 @@
-// The mAIndmeld server: one process serving the JSON API, long-poll and SSE
-// fan-out, and the web UI from one origin. DESIGN.md sections 3, 5, 8.
+// The mAIndmeld server: one process serving the JSON API, the MCP endpoint,
+// long-poll and SSE fan-out, and the web UI from one origin. The room
+// operations live in a service object shared by the HTTP API and MCP.
+// DESIGN.md sections 3, 5, 8, 9.
 
 import fs from "node:fs";
 import http from "node:http";
@@ -9,9 +11,10 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { Store, isRoomCode, FormatTooNewError } from "./store.js";
 import * as rooms from "./rooms.js";
-import { Auth, AuthError } from "./auth.js";
+import { Auth } from "./auth.js";
 import { RoomEvents } from "./events.js";
 import { ModelParticipant } from "./models.js";
+import { createMcp } from "./mcp.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const VERSION = JSON.parse(fs.readFileSync(path.join(here, "..", "package.json"), "utf8")).version;
@@ -20,7 +23,7 @@ const WEB_DIR = path.join(here, "web");
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const STATIC_TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" };
 
-class HttpError extends Error {
+export class HttpError extends Error {
   constructor(status, message, extra = {}) {
     super(message);
     this.status = status;
@@ -93,11 +96,11 @@ export function createApp(config = loadConfig()) {
     } catch {
       throw new HttpError(400, "request body must be valid JSON");
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new HttpError(400, "request body must be a JSON object");
+    if (!parsed || typeof parsed !== "object") throw new HttpError(400, "request body must be a JSON object");
     return parsed;
   }
 
-  /** Load, mutate synchronously, save, and notify. Serialized per room. */
+  /** Load, mutate synchronously, save. Serialized per room. */
   function withRoom(code, fn) {
     if (!isRoomCode(code)) throw new HttpError(404, `no room ${code}`);
     const prev = queues.get(code) || Promise.resolve();
@@ -119,20 +122,6 @@ export function createApp(config = loadConfig()) {
   const principalKind = (principal) => (principal.kind === "session" ? "human" : "agent");
   const principalKey = (principal) => (principal.kind === "session" ? principal.token_name : principal.name);
 
-  function requireAuth(req) {
-    const principal = auth.authenticate(req);
-    if (!principal) throw new HttpError(401, "sign in with a token");
-    return principal;
-  }
-
-  function checkOrigin(req, principal) {
-    if (!MUTATING.has(req.method) || principal.kind !== "session") return;
-    const origin = req.headers.origin;
-    if (!origin || !config.allowedOrigins.has(origin)) {
-      throw new HttpError(403, `origin ${origin || "(none)"} is not this server's public origin`);
-    }
-  }
-
   function limit(principal, kind) {
     const key = `${kind}:${principalKey(principal)}`;
     const ok = kind === "messages"
@@ -140,6 +129,12 @@ export function createApp(config = loadConfig()) {
       : limiter.allow(key, config.limits.roomsPerHour, 3_600_000);
     if (!ok) throw new HttpError(429, `rate limit hit: ${kind === "messages" ? `${config.limits.messagesPerMinute} messages per minute` : `${config.limits.roomsPerHour} rooms per hour`}`, { limit: kind });
   }
+
+  const loadOr404 = (code) => {
+    const room = store.loadRoom(code);
+    if (!room) throw new HttpError(404, `no room ${code}`);
+    return room;
+  };
 
   // ---- model participants ----
 
@@ -157,22 +152,6 @@ export function createApp(config = loadConfig()) {
     },
   };
 
-  async function inviteModel(code, profileKey, requestedName) {
-    const profile = config.profiles[profileKey];
-    if (!profile) throw new HttpError(404, `no model profile named ${profileKey}; configured: ${Object.keys(config.profiles).join(", ") || "none"}`);
-    const name = rooms.cleanName(requestedName || profile.displayName);
-    const key = `${code}:${name.toLowerCase()}`;
-    if (models.has(key)) return { participant: models.get(key).status(), rejoined: true };
-    const { participant } = await withRoom(code, (room) => rooms.joinRoom(room, { name, kind: "model", client: profileKey }));
-    events.notify(code, { type: "participant", action: "joined", participant });
-    const mp = new ModelParticipant({ code, name, profileKey, profile, hooks: modelHooks }).start();
-    models.set(key, mp);
-    log(`model ${name} (${profileKey}) joined ${code}`);
-    // Let it read the room as it stands and speak if it has something to say.
-    mp.schedule();
-    return { participant: mp.status(), rejoined: false };
-  }
-
   function modelStatuses() {
     const out = [];
     for (const [key, mp] of models) {
@@ -180,6 +159,219 @@ export function createApp(config = loadConfig()) {
       else out.push(mp.status());
     }
     return out;
+  }
+
+  // ---- the room service, shared by the HTTP API and MCP ----
+
+  const service = {
+    async createRoom(principal, body) {
+      limit(principal, "rooms");
+      let room;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        room = rooms.createRoom({
+          title: body.title,
+          objective: body.objective,
+          creator: { name: body.name || principal.name, kind: body.kind || principalKind(principal), client: body.client },
+          responseMode: body.response_mode,
+        });
+        if (!store.roomExists(room.code)) break;
+        room = null;
+      }
+      if (!room) throw new HttpError(500, "could not allocate a room code");
+      store.saveRoom(room);
+      events.notify(room.code, { type: "room", room: rooms.summarizeRoom(room) });
+      log(`room ${room.code} created by ${room.created_by.name} (${room.created_by.kind})`);
+      return { room, invitation: invitationText(room, config.publicOrigin) };
+    },
+
+    async get(code) {
+      const room = loadOr404(code);
+      return { room, invitation: invitationText(room, config.publicOrigin) };
+    },
+
+    async list(name) {
+      const all = store.listRooms().sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1)).map(rooms.summarizeRoom);
+      const lower = name ? name.toLowerCase() : null;
+      const mine = lower ? all.filter((r) => r.status === "open" && r.participants.some((p) => p.name.toLowerCase() === lower)) : [];
+      const needs = all.filter((r) => r.status === "open" && r.human_required && !r.human_present);
+      const other = all.filter((r) => r.status === "open" && !mine.includes(r) && !needs.includes(r));
+      return { all, mine, needs_human: needs, other_open: other };
+    },
+
+    async join(principal, code, body) {
+      const result = await withRoom(code, (room) => {
+        const { participant, rejoined } = rooms.joinRoom(room, {
+          name: body.name || principal.name,
+          kind: body.kind || principalKind(principal),
+          client: body.client,
+        });
+        return { participant, rejoined, room };
+      });
+      if (!result.rejoined) events.notify(code, { type: "participant", action: "joined", participant: result.participant });
+      return { ...result, invitation: invitationText(result.room, config.publicOrigin) };
+    },
+
+    async leave(principal, code, body) {
+      const participant = await withRoom(code, (room) => rooms.leaveRoom(room, body.name || principal.name, body.message));
+      events.notify(code, { type: "participant", action: "left", participant });
+      return participant;
+    },
+
+    async send(principal, code, body) {
+      limit(principal, "messages");
+      const message = await withRoom(code, (room) =>
+        rooms.sendMessage(room, { sender: body.sender || principal.name, content: body.content, reply_to: body.reply_to }, config.limits.maxBodyBytes),
+      );
+      events.notify(code, { type: "message", message });
+      return message;
+    },
+
+    /** Long-poll. With `name`, advances that participant's cursor. */
+    async listen(code, { name, wait = 0, after = null }) {
+      const maxWait = Math.min(config.limits.maxWaitSeconds, Math.max(0, Number(wait) || 0));
+      const explicitAfter = after === null || after === undefined ? null : Math.max(0, Number(after) || 0);
+
+      const snapshot = (room) => {
+        const participant = name ? rooms.findParticipant(room, name) : null;
+        if (name && !participant && room.status === "open") throw new HttpError(403, `${name} is not a participant in ${code}; join first`);
+        const from = explicitAfter ?? (participant ? participant.cursor : 0);
+        const messages = participant && explicitAfter === null
+          ? rooms.unreadFor(room, participant)
+          : rooms.messagesAfter(room, from).filter((m) => !participant || m.sender.toLowerCase() !== participant.name.toLowerCase());
+        return { participant, messages };
+      };
+
+      // Wake for something worth waking for: a non-system message, an open
+      // motion, or the room closing. System lines alone (joins, leaves) are
+      // returned with the next real event or at the deadline, so an agent
+      // in a listen loop is not spun up for every arrival.
+      const worthWaking = (room, messages) =>
+        room.status !== "open" || messages.some((m) => m.kind !== "system") || room.motions.some((m) => m.status === "open");
+
+      let room = loadOr404(code);
+      let { participant, messages } = snapshot(room);
+      const deadline = Date.now() + maxWait * 1000;
+      while (!worthWaking(room, messages) && Date.now() < deadline) {
+        await events.waitForChange(code, Math.ceil((deadline - Date.now()) / 1000));
+        room = loadOr404(code);
+        ({ participant, messages } = snapshot(room));
+      }
+
+      let cursor = explicitAfter ?? 0;
+      if (participant) {
+        cursor = room.next_message_id - 1;
+        await withRoom(code, (r) => {
+          const p = rooms.findParticipant(r, participant.name);
+          if (p) {
+            p.cursor = Math.max(p.cursor, cursor);
+            p.last_seen_at = rooms.now();
+          }
+        });
+      } else if (messages.length) {
+        cursor = messages.at(-1).id;
+      }
+
+      const next = room.status !== "open" ? "leave" : messages.some((m) => m.kind !== "system") ? "reply" : "listen";
+      return {
+        code,
+        status: room.status,
+        response_mode: room.response_mode,
+        human_required: room.human_required,
+        human_present: room.human_present,
+        participants: room.participants.map(({ name: n, kind, last_seen_at }) => ({ name: n, kind, last_seen_at })),
+        motions_open: room.motions.filter((m) => m.status === "open"),
+        messages,
+        cursor,
+        next,
+      };
+    },
+
+    async status(code) {
+      return rooms.summarizeRoom(loadOr404(code));
+    },
+
+    async setMode(principal, code, mode) {
+      const changed = await withRoom(code, (room) => rooms.setResponseMode(room, mode, principal.name));
+      if (changed) events.notify(code, { type: "room", room: rooms.summarizeRoom(store.loadRoom(code)) });
+      return changed;
+    },
+
+    async close(principal, code, body) {
+      // Milestone 1: any principal may close directly. Milestone 3 restricts
+      // direct close to humans and gives agents the close motion.
+      const changed = await withRoom(code, (room) =>
+        rooms.closeRoom(room, { by: body.name || principal.name, kind: principalKind(principal), summary: body.summary, how: "direct" }),
+      );
+      if (changed) {
+        const room = store.loadRoom(code);
+        events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
+        events.notify(code, { type: "message", message: room.messages.at(-1) });
+        log(`room ${code} closed by ${principal.name}`);
+      }
+      return changed;
+    },
+
+    async invite(principal, code, body) {
+      const kind = String(body.kind ?? "session");
+      if (kind === "model") {
+        const profileKey = String(body.profile ?? "");
+        const profile = config.profiles[profileKey];
+        if (!profile) throw new HttpError(404, `no model profile named ${profileKey}; configured: ${Object.keys(config.profiles).join(", ") || "none"}`);
+        const name = rooms.cleanName(body.name || profile.displayName);
+        const key = `${code}:${name.toLowerCase()}`;
+        if (models.has(key) && !models.get(key).stopped) return { participant: models.get(key).status(), rejoined: true };
+        const { participant } = await withRoom(code, (room) => rooms.joinRoom(room, { name, kind: "model", client: profileKey }));
+        events.notify(code, { type: "participant", action: "joined", participant });
+        const mp = new ModelParticipant({ code, name, profileKey, profile, hooks: modelHooks }).start();
+        models.set(key, mp);
+        log(`model ${name} (${profileKey}) joined ${code}`);
+        mp.schedule();
+        return { participant: mp.status(), rejoined: false };
+      }
+      if (kind === "human") {
+        const changed = await withRoom(code, (room) => {
+          if (room.status !== "open") throw new HttpError(409, `room ${code} is ${room.status}`);
+          if (room.human_required) return false;
+          room.human_required = true;
+          rooms.addSystemMessage(room, `${principal.name} asked for a human to join.${body.reason ? ` Reason: ${body.reason}` : ""}`);
+          return true;
+        });
+        if (changed) {
+          const room = store.loadRoom(code);
+          events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
+          events.notify(code, { type: "message", message: room.messages.at(-1) });
+        }
+        return { ok: true, human_required: true };
+      }
+      if (kind === "session") {
+        const room = loadOr404(code);
+        const target = body.name ? rooms.cleanName(body.name, "invitee") : null;
+        await withRoom(code, (r) => rooms.addSystemMessage(r, `${principal.name} invited ${target || "another session"}.`));
+        events.notify(code, { type: "message", message: store.loadRoom(code).messages.at(-1) });
+        return { invitation: invitationText(room, config.publicOrigin), deliver: "Send this text to the session yourself; the server cannot reach it." };
+      }
+      throw new HttpError(400, "kind must be session, model, or human");
+    },
+  };
+
+  const mcp = createMcp({ service, version: VERSION, log });
+
+  // ---- auth ----
+
+  function requireAuth(req) {
+    const principal = auth.authenticate(req);
+    if (!principal) throw new HttpError(401, "sign in with a token");
+    return principal;
+  }
+
+  function originAllowed(req) {
+    const origin = req.headers.origin;
+    return Boolean(origin) && config.allowedOrigins.has(origin);
+  }
+
+  function checkOrigin(req, principal) {
+    if (!MUTATING.has(req.method) || principal.kind !== "session") return;
+    if (!originAllowed(req)) throw new HttpError(403, `origin ${req.headers.origin || "(none)"} is not this server's public origin`);
   }
 
   // ---- API handlers ----
@@ -202,6 +394,7 @@ export function createApp(config = loadConfig()) {
       events: events.counts(),
       models: modelStatuses(),
       profiles: Object.keys(config.profiles),
+      mcp: { endpoint: `${config.publicOrigin}/mcp`, protocol_versions: mcp.tools ? ["2025-11-25", "2025-06-18", "2025-03-26"] : [] },
       public_origin: config.publicOrigin,
     };
   }
@@ -209,10 +402,7 @@ export function createApp(config = loadConfig()) {
   async function login(req, res) {
     // Login is browser-only and sets a cookie, so it gets the origin check
     // too; otherwise a hostile page could sign a victim in under its token.
-    const origin = req.headers.origin;
-    if (!origin || !config.allowedOrigins.has(origin)) {
-      throw new HttpError(403, `origin ${origin || "(none)"} is not this server's public origin`);
-    }
+    if (!originAllowed(req)) throw new HttpError(403, `origin ${req.headers.origin || "(none)"} is not this server's public origin`);
     const body = await readBody(req);
     const record = auth.verifyToken(String(body.token ?? "").trim());
     if (!record) throw new HttpError(401, "that token is not valid");
@@ -223,8 +413,7 @@ export function createApp(config = loadConfig()) {
   }
 
   async function handleApi(req, res, url, parts) {
-    // parts: ["api", ...]
-    const [, head, code, sub, ...rest] = parts;
+    const [, head, code, sub] = parts;
 
     if (head === "health" && req.method === "GET") return send(res, 200, health());
 
@@ -258,187 +447,66 @@ export function createApp(config = loadConfig()) {
     if (!code) {
       if (req.method === "GET") {
         const status = url.searchParams.get("status");
-        const list = store.listRooms()
-          .filter((r) => !status || r.status === status)
-          .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
-          .map(rooms.summarizeRoom);
-        return send(res, 200, { rooms: list });
+        const { all } = await service.list(null);
+        return send(res, 200, { rooms: status ? all.filter((r) => r.status === status) : all });
       }
       if (req.method === "POST") {
         const body = await readBody(req);
-        limit(principal, "rooms");
-        let room;
-        for (let attempt = 0; attempt < 5; attempt += 1) {
-          room = rooms.createRoom({
-            title: body.title,
-            objective: body.objective,
-            creator: { name: body.name || principal.name, kind: body.kind || principalKind(principal), client: body.client },
-            responseMode: body.response_mode,
-          });
-          if (!store.roomExists(room.code)) break;
-          room = null;
-        }
-        if (!room) throw new HttpError(500, "could not allocate a room code");
-        store.saveRoom(room);
-        events.notify(room.code, { type: "room", room: rooms.summarizeRoom(room) });
-        log(`room ${room.code} created by ${room.created_by.name} (${room.created_by.kind})`);
-        return send(res, 201, { room, invitation: invitationText(room, config.publicOrigin) });
+        return send(res, 201, await service.createRoom(principal, body));
       }
       throw new HttpError(405, "method not allowed");
     }
 
     if (!isRoomCode(code)) throw new HttpError(404, `no room ${code}`);
 
-    if (!sub && req.method === "GET") {
-      const room = store.loadRoom(code);
-      if (!room) throw new HttpError(404, `no room ${code}`);
-      return send(res, 200, { room, invitation: invitationText(room, config.publicOrigin) });
-    }
+    if (!sub && req.method === "GET") return send(res, 200, await service.get(code));
 
     if (sub === "events" && req.method === "GET") {
       if (!store.roomExists(code)) throw new HttpError(404, `no room ${code}`);
       return events.subscribe(code, res);
     }
 
-    if (sub === "messages" && req.method === "GET") return longPoll(req, res, url, code);
+    if (sub === "messages" && req.method === "GET") {
+      const state = await service.listen(code, {
+        name: url.searchParams.get("name"),
+        wait: url.searchParams.get("wait") || 0,
+        after: url.searchParams.has("after") ? url.searchParams.get("after") : null,
+      });
+      return send(res, 200, state);
+    }
 
     if (req.method !== "POST") throw new HttpError(405, "method not allowed");
     const body = await readBody(req);
 
     switch (sub) {
       case "join": {
-        const result = await withRoom(code, (room) => {
-          const { participant, rejoined } = rooms.joinRoom(room, {
-            name: body.name || principal.name,
-            kind: body.kind || principalKind(principal),
-            client: body.client,
-          });
-          return { participant, rejoined, room };
-        });
-        if (!result.rejoined) events.notify(code, { type: "participant", action: "joined", participant: result.participant });
-        return send(res, 200, { room: result.room, participant: result.participant, rejoined: result.rejoined, invitation: invitationText(result.room, config.publicOrigin) });
+        const r = await service.join(principal, code, body);
+        return send(res, 200, r);
       }
-      case "leave": {
-        const participant = await withRoom(code, (room) => rooms.leaveRoom(room, body.name || principal.name, body.message));
-        events.notify(code, { type: "participant", action: "left", participant });
+      case "leave":
+        await service.leave(principal, code, body);
         return send(res, 200, { ok: true });
-      }
-      case "messages": {
-        limit(principal, "messages");
-        const message = await withRoom(code, (room) =>
-          rooms.sendMessage(room, { sender: body.sender || principal.name, content: body.content, reply_to: body.reply_to }, config.limits.maxBodyBytes),
-        );
-        events.notify(code, { type: "message", message });
-        return send(res, 201, { message });
-      }
-      case "invite": {
-        const kind = String(body.kind ?? "session");
-        if (kind === "model") {
-          const result = await inviteModel(code, String(body.profile ?? ""), body.name);
-          return send(res, 200, result);
-        }
-        if (kind === "human") {
-          const changed = await withRoom(code, (room) => {
-            if (room.status !== "open") throw new HttpError(409, `room ${code} is ${room.status}`);
-            if (room.human_required) return false;
-            room.human_required = true;
-            rooms.addSystemMessage(room, `${principal.name} asked for a human to join.${body.reason ? ` Reason: ${body.reason}` : ""}`);
-            return true;
-          });
-          if (changed) {
-            const room = store.loadRoom(code);
-            events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
-            events.notify(code, { type: "message", message: room.messages.at(-1) });
-          }
-          return send(res, 200, { ok: true, human_required: true });
-        }
-        if (kind === "session") {
-          const room = store.loadRoom(code);
-          if (!room) throw new HttpError(404, `no room ${code}`);
-          const target = body.name ? rooms.cleanName(body.name, "invitee") : null;
-          await withRoom(code, (r) => rooms.addSystemMessage(r, `${principal.name} invited ${target || "another session"}.`));
-          events.notify(code, { type: "message", message: store.loadRoom(code).messages.at(-1) });
-          return send(res, 200, { invitation: invitationText(room, config.publicOrigin), deliver: "Send this text to the session yourself; the server cannot reach it." });
-        }
-        throw new HttpError(400, "kind must be session, model, or human");
-      }
-      case "mode": {
-        const changed = await withRoom(code, (room) => rooms.setResponseMode(room, body.response_mode, principal.name));
-        if (changed) events.notify(code, { type: "room", room: rooms.summarizeRoom(store.loadRoom(code)) });
+      case "messages":
+        return send(res, 201, { message: await service.send(principal, code, body) });
+      case "invite":
+        return send(res, 200, await service.invite(principal, code, body));
+      case "mode":
+        await service.setMode(principal, code, body.response_mode);
         return send(res, 200, { response_mode: body.response_mode });
-      }
-      case "close": {
-        // Milestone 1: any principal may close directly. Milestone 3 restricts
-        // direct close to humans and gives agents the close motion.
-        const changed = await withRoom(code, (room) =>
-          rooms.closeRoom(room, { by: body.name || principal.name, kind: principalKind(principal), summary: body.summary, how: "direct" }),
-        );
-        if (changed) {
-          const room = store.loadRoom(code);
-          events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
-          events.notify(code, { type: "message", message: room.messages.at(-1) });
-          log(`room ${code} closed by ${principal.name}`);
-        }
-        return send(res, 200, { ok: true, changed });
-      }
+      case "close":
+        return send(res, 200, { ok: true, changed: await service.close(principal, code, body) });
       default:
         throw new HttpError(404, "not found");
     }
   }
 
-  async function longPoll(req, res, url, code) {
-    const name = url.searchParams.get("name");
-    const wait = Math.min(config.limits.maxWaitSeconds, Math.max(0, Number(url.searchParams.get("wait") || 0) || 0));
-    const explicitAfter = url.searchParams.has("after") ? Math.max(0, Number(url.searchParams.get("after")) || 0) : null;
-
-    const snapshot = (room) => {
-      const participant = name ? rooms.findParticipant(room, name) : null;
-      if (name && !participant && room.status === "open") throw new HttpError(403, `${name} is not a participant in ${code}; join first`);
-      const after = explicitAfter ?? (participant ? participant.cursor : 0);
-      const messages = participant && explicitAfter === null
-        ? rooms.unreadFor(room, participant)
-        : rooms.messagesAfter(room, after).filter((m) => !participant || m.sender.toLowerCase() !== participant.name.toLowerCase());
-      return { participant, messages };
-    };
-
-    let room = store.loadRoom(code);
-    if (!room) throw new HttpError(404, `no room ${code}`);
-    let { participant, messages } = snapshot(room);
-
-    if (messages.length === 0 && room.status === "open" && wait > 0) {
-      await events.waitForChange(code, wait);
-      room = store.loadRoom(code);
-      if (!room) throw new HttpError(404, `no room ${code}`);
-      ({ participant, messages } = snapshot(room));
-    }
-
-    let cursor = explicitAfter ?? 0;
-    if (participant) {
-      cursor = room.next_message_id - 1;
-      await withRoom(code, (r) => {
-        const p = rooms.findParticipant(r, participant.name);
-        if (p) {
-          p.cursor = Math.max(p.cursor, cursor);
-          p.last_seen_at = rooms.now();
-        }
-      });
-    } else if (messages.length) {
-      cursor = messages.at(-1).id;
-    }
-
-    const next = room.status !== "open" ? "leave" : messages.some((m) => m.kind !== "system") ? "reply" : "listen";
-    return send(res, 200, {
-      code,
-      status: room.status,
-      response_mode: room.response_mode,
-      human_required: room.human_required,
-      human_present: room.human_present,
-      participants: room.participants.map(({ name: n, kind, last_seen_at }) => ({ name: n, kind, last_seen_at })),
-      motions_open: room.motions.filter((m) => m.status === "open"),
-      messages,
-      cursor,
-      next,
-    });
+  async function handleMcp(req, res) {
+    // MCP clients are not browsers, but the spec says validate Origin when
+    // present, so a rebinding page cannot drive the endpoint.
+    if (req.headers.origin && !originAllowed(req)) throw new HttpError(403, `origin ${req.headers.origin} is not this server's public origin`);
+    const principal = requireAuth(req);
+    const body = req.method === "POST" ? await readBody(req) : null;
+    return mcp.handle(req, res, { body, principal, send });
   }
 
   // ---- static ----
@@ -464,6 +532,7 @@ export function createApp(config = loadConfig()) {
     const parts = url.pathname.split("/").filter(Boolean);
     try {
       if (parts[0] === "api") return await handleApi(req, res, url, parts);
+      if (parts[0] === "mcp" && parts.length === 1) return await handleMcp(req, res);
       if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "method not allowed");
       if (parts.length === 0) return serveStatic(res, "index.html");
       if (parts[0] === "login" && parts.length === 1) return serveStatic(res, "login.html");
@@ -507,6 +576,7 @@ export function createApp(config = loadConfig()) {
     store,
     auth,
     events,
+    service,
     server,
     start() {
       for (const w of config.warnings || []) log(`warning: ${w}`);
@@ -523,7 +593,7 @@ export function createApp(config = loadConfig()) {
             if (config.loopback) for (const host of ["127.0.0.1", "localhost", "[::1]"]) config.allowedOrigins.add(`http://${host}:${addr.port}`);
             else config.allowedOrigins.add(config.publicOrigin);
           }
-          log(`mAIndmeld ${VERSION} listening on http://${config.bind}:${addr.port} (data ${config.dataDir})`);
+          log(`mAIndmeld ${VERSION} listening on http://${config.bind}:${addr.port} (data ${config.dataDir}); MCP at ${config.publicOrigin}/mcp`);
           resolve(addr);
         });
       });

@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "local": {
+      "base_url": "http://llama:8080/v1",
+      "model": "local",
+      "display_name": "Local",
+      "timeout_ms": 180000,
+      "max_tokens": 400
+    }
+  }
+}

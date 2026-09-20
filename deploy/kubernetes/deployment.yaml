@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maindmeld
+  labels:
+    app.kubernetes.io/name: maindmeld
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: maindmeld
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: maindmeld
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: maindmeld
+          image: ghcr.io/dev-dull/maindmeld:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 7340
+          env:
+            - name: MAINDMELD_DATA_DIR
+              value: /data
+            - name: MAINDMELD_BIND
+              value: 0.0.0.0
+            - name: MAINDMELD_PORT
+              value: "7340"
+            - name: MAINDMELD_CONFIG
+              value: /config/config.json
+            - name: MAINDMELD_PUBLIC_ORIGIN
+              value: https://maindmeld.example.com
+          envFrom:
+            - secretRef:
+                name: maindmeld-env
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /config
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: maindmeld-data
+        - name: config
+          configMap:
+            name: maindmeld-config

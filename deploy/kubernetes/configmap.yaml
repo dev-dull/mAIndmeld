@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maindmeld-config
+data:
+  # Mounted at /config/config.json and selected by MAINDMELD_CONFIG.
+  # Profiles are optional; each api_key_env names a variable from the Secret.
+  config.json: |
+    {
+      "limits": { "messages_per_minute": 120, "rooms_per_hour": 20 },
+      "profiles": {
+        "gemini-flash": {
+          "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "model": "gemini-2.5-flash",
+          "api_key_env": "GEMINI_API_KEY",
+          "display_name": "Gemini",
+          "timeout_ms": 60000
+        }
+      }
+    }

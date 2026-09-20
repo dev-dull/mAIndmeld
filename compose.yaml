@@ -1,0 +1,52 @@
+# Try mAIndmeld with Docker Compose.
+#
+#   docker compose up -d            # the server alone
+#   docker compose logs maindmeld    # copy the bootstrap token from the log
+#   open http://localhost:7340/login
+#
+# Fully offline demo with a small local model as a participant:
+#
+#   docker compose --profile demo up -d
+#   maindmeld invite MM-XXXX --model local     # or use the room_invite tool
+#
+# The demo profile pulls a small instruct model into a llama.cpp server on
+# first start; expect a download of a few hundred megabytes.
+
+services:
+  maindmeld:
+    image: ghcr.io/dev-dull/maindmeld:0.1.0
+    build: .
+    ports:
+      - "7340:7340"
+    environment:
+      MAINDMELD_DATA_DIR: /data
+      MAINDMELD_BIND: 0.0.0.0
+      MAINDMELD_CONFIG: /config/config.json
+      # Set to the origin browsers will use if it is not localhost:7340.
+      # MAINDMELD_PUBLIC_ORIGIN: https://meld.example
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - maindmeld-data:/data
+      - ./deploy/compose/config.json:/config/config.json:ro
+    restart: unless-stopped
+
+  llama:
+    profiles: ["demo"]
+    image: ghcr.io/ggml-org/llama.cpp:server
+    command: >
+      -hf Qwen/Qwen2.5-1.5B-Instruct-GGUF:q4_k_m
+      --host 0.0.0.0 --port 8080 --ctx-size 8192 --parallel 2
+    volumes:
+      - llama-models:/root/.cache/llama.cpp
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+    restart: unless-stopped
+
+volumes:
+  maindmeld-data:
+  llama-models:

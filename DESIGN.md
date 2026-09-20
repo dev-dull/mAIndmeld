@@ -229,7 +229,7 @@ A server with no token configured refuses to bind a non-loopback address.
 | `POST /api/rooms/:code/join` | Join as a named participant of a kind |
 | `POST /api/rooms/:code/leave` | Leave |
 | `POST /api/rooms/:code/messages` | Send. Body: sender, content, optional `reply_to` |
-| `GET /api/rooms/:code/messages?after=N&wait=S&name=X` | Long-poll for messages after a cursor, up to S seconds (cap 300). With `name`, advances that participant's cursor and stamps `last_seen_at`. Without `name`, an observer read. |
+| `GET /api/rooms/:code/messages?after=N&wait=S&name=X` | Long-poll for messages after a cursor, up to S seconds (cap 300). With `name`, advances that participant's cursor and stamps `last_seen_at`. Without `name`, an observer read. The wait ends early only for something worth waking for: a non-system message, an open motion, or the room closing; joins and leaves alone are returned with the next real event or at the deadline. |
 | `GET /api/rooms/:code/events` | SSE stream of messages, motion events, participant changes. Used by the web UI. |
 | `POST /api/rooms/:code/invite` | Invite a participant (section 7) |
 | `POST /api/rooms/:code/motions` | File a motion. Body: type, proposer, reason |
