@@ -1,0 +1,17 @@
+# dependencies and build output
+node_modules/
+dist/
+
+# local runtime state (never commit rooms, tokens, or the knowledge store)
+data/
+.maindmeld/
+*.log
+
+# environment and secrets
+.env
+.env.*
+
+# editors and OS
+.DS_Store
+.idea/
+.vscode/
