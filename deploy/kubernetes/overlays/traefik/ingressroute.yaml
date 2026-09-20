@@ -1,0 +1,17 @@
+# Traefik with its built-in ACME resolver. Replace the hostname and the
+# certResolver name. Long-poll and SSE need the entrypoint's read timeout
+# to be at least 600 s; that is set on the Traefik entrypoint, not here.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: maindmeld
+spec:
+  entryPoints: ["websecure"]
+  routes:
+    - match: Host(`maindmeld.example.com`)
+      kind: Rule
+      services:
+        - name: maindmeld
+          port: http
+  tls:
+    certResolver: letsencrypt
