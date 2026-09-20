@@ -128,6 +128,7 @@ export function createRoom({ title, objective, creator, responseMode, code, cloc
     participants: [],
     messages: [],
     motions: [],
+    others_joined: 0,
     next_message_id: 1,
     next_motion_id: 1,
   };
@@ -152,6 +153,7 @@ export function upgradeRoom(room) {
   room.clock_config ??= { ...DEFAULT_CLOCKS };
   room.motions ??= [];
   room.next_motion_id ??= room.motions.length + 1;
+  room.others_joined ??= Math.max(0, room.participants.filter((p) => !sameName(p.name, room.created_by?.name ?? "")).length);
   room.format = 2;
   return room;
 }
@@ -177,6 +179,7 @@ export function joinRoom(room, { name, kind, client }, nowMs = Date.now()) {
     cursor: lastMessageId(room),
   };
   room.participants.push(participant);
+  if (!sameName(cleaned, room.created_by.name)) room.others_joined = (room.others_joined || 0) + 1;
   const joined = addSystemMessage(room, `${cleaned} joined as ${k}.`, null, nowMs);
   participant.cursor = joined.id;
   recomputeHumanPresent(room);
@@ -273,6 +276,24 @@ export function closeRoom(room, { by, kind, summary, how = "direct" }, nowMs = D
   room.closed_by = { name: by, kind, how };
   room.summary = summary ? cleanText(summary, "summary", 10000, false) : null;
   pushMessage(room, { kind: "summary", sender: by, content: room.summary || `Room closed by ${by}.` }, nowMs);
+  return true;
+}
+
+/** Nobody but the creator ever came. Not ingested; listed apart in the lobby. */
+export function abandonRoom(room, nowMs = Date.now()) {
+  if (room.status !== "open") return false;
+  const stamp = iso(nowMs);
+  for (const m of room.motions) {
+    if (m.status === "open") {
+      m.status = "cancelled";
+      m.resolved_at = stamp;
+      m.outcome = { how: "room_closed", by: null, reason: null, tally: tally(m) };
+    }
+  }
+  room.status = "abandoned";
+  room.closed_at = stamp;
+  room.closed_by = { name: "room", kind: "system", how: "abandoned" };
+  addSystemMessage(room, `Nobody joined ${room.created_by.name}, so the room was marked abandoned.`, { action: "abandoned" }, nowMs);
   return true;
 }
 

@@ -163,6 +163,9 @@ export function createApp(config = loadConfig()) {
 
   const notifier = createNotifier(config, log);
   const motionRooms = new Set(); // rooms with an open motion, for the scheduler
+  const abandonCandidates = new Set(); // open rooms an agent or model created that nobody else has joined
+
+  const isHumanCreator = (room) => room.created_by.kind === "human";
 
   function afterMotion(code, motion, action, room) {
     events.notify(code, { type: "motion", action, motion: rooms.motionView(motion, null) });
@@ -179,12 +182,79 @@ export function createApp(config = loadConfig()) {
     }
   }
 
+  // ---- profile statistics: turn latency and waits into tuning data (DESIGN.md 10.3) ----
+
+  const profileStats = new Map(); // profileKey -> stats
+  function statsFor(key) {
+    let s = profileStats.get(key);
+    if (!s) {
+      s = { durations: [], calls: 0, failures: 0, timeouts: 0, skipped: 0, waits: 0, callTimes: [] };
+      profileStats.set(key, s);
+    }
+    return s;
+  }
+  function recordProfile(key, event) {
+    const s = statsFor(key);
+    if (event.ms !== undefined) {
+      s.calls += 1;
+      s.durations.push(event.ms);
+      if (s.durations.length > 500) s.durations.shift();
+    }
+    if (event.failure) {
+      s.calls += 1;
+      s.failures += 1;
+      if (event.timeout) s.timeouts += 1;
+    }
+    if (event.wait) s.waits += 1;
+    if (event.skipped) s.skipped += 1;
+  }
+  function allowCall(key) {
+    const limit = config.profiles[key]?.maxCallsPerHour ?? 120;
+    const s = statsFor(key);
+    const now = Date.now();
+    s.callTimes = s.callTimes.filter((t) => now - t < 3_600_000);
+    if (s.callTimes.length >= limit) {
+      recordProfile(key, { skipped: true });
+      return false;
+    }
+    s.callTimes.push(now);
+    return true;
+  }
+  function profileReport() {
+    const out = {};
+    for (const [key, p] of Object.entries(config.profiles)) {
+      const s = statsFor(key);
+      const sorted = [...s.durations].sort((a, b) => a - b);
+      const pick = (q) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] : null);
+      const p95 = pick(0.95);
+      let hint = null;
+      if (p95 !== null && p95 > p.timeoutMs * 0.8) hint = `p95 ${p95} ms is near timeout_ms ${p.timeoutMs}; consider timeout_ms ${Math.ceil((p95 * 1.5) / 1000) * 1000}`;
+      else if (s.waits > 0) hint = `${s.waits} wait${s.waits === 1 ? "" : "s"} granted; consider a longer timeout_ms or vote window`;
+      out[key] = {
+        model: p.model,
+        timeout_ms: p.timeoutMs,
+        max_calls_per_hour: p.maxCallsPerHour,
+        calls: s.calls,
+        failures: s.failures,
+        timeouts: s.timeouts,
+        skipped: s.skipped,
+        waits: s.waits,
+        latency_ms: { p50: pick(0.5), p95, n: sorted.length },
+        calls_last_hour: s.callTimes.filter((t) => Date.now() - t < 3_600_000).length,
+        hint,
+      };
+    }
+    return out;
+  }
+
   // ---- model participants ----
 
   const modelHooks = {
     loadRoom: (code) => store.loadRoom(code),
     on: (code, fn) => events.on(code, fn),
     log,
+    record: recordProfile,
+    allowCall,
     async post(code, name, text) {
       const message = await withRoom(code, (room) => rooms.sendMessage(room, { sender: name, content: text }, config.limits.maxBodyBytes));
       events.notify(code, { type: "message", message });
@@ -213,12 +283,21 @@ export function createApp(config = loadConfig()) {
   const service = {
     async createRoom(principal, body) {
       limit(principal, "rooms");
+      const creatorName = body.name || principal.name;
+      const creatorKind = body.kind || principalKind(principal);
+      if (creatorKind !== "human") {
+        // DESIGN.md 7.1: a runaway agent cannot open rooms without end.
+        const open = store.listRooms().filter((r) => r.status === "open" && r.created_by.name.toLowerCase() === String(creatorName).toLowerCase()).length;
+        if (open >= config.limits.roomsOpenPerCreator) {
+          throw new HttpError(429, `${creatorName} already has ${open} open rooms; close one before creating another`, { limit: "rooms_open" });
+        }
+      }
       let room;
       for (let attempt = 0; attempt < 5; attempt += 1) {
         room = rooms.createRoom({
           title: body.title,
           objective: body.objective,
-          creator: { name: body.name || principal.name, kind: body.kind || principalKind(principal), client: body.client },
+          creator: { name: creatorName, kind: creatorKind, client: body.client },
           responseMode: body.response_mode,
         });
         if (!store.roomExists(room.code)) break;
@@ -227,9 +306,25 @@ export function createApp(config = loadConfig()) {
       if (!room) throw new HttpError(500, "could not allocate a room code");
       room.clock_config = { ...config.clocks };
       store.saveRoom(room);
+      if (!isHumanCreator(room)) abandonCandidates.add(room.code);
       events.notify(room.code, { type: "room", room: rooms.summarizeRoom(room) });
       log(`room ${room.code} created by ${room.created_by.name} (${room.created_by.kind})`);
-      return { room, invitation: invitationText(room, config.publicOrigin) };
+
+      const invites = [];
+      for (const profile of Array.isArray(body.invite_models) ? body.invite_models : []) {
+        try {
+          const r = await service.invite(principal, room.code, { kind: "model", profile: String(profile) });
+          invites.push({ kind: "model", profile: String(profile), ok: true, name: r.participant.name });
+        } catch (error) {
+          invites.push({ kind: "model", profile: String(profile), ok: false, error: error.message });
+        }
+      }
+      if (body.invite_human) {
+        await service.invite(principal, room.code, { kind: "human", reason: body.objective });
+        invites.push({ kind: "human", ok: true });
+      }
+      const fresh = invites.length ? store.loadRoom(room.code) : room;
+      return { room: fresh, invitation: invitationText(fresh, config.publicOrigin), invites };
     },
 
     async get(code) {
@@ -255,7 +350,10 @@ export function createApp(config = loadConfig()) {
         });
         return { participant, rejoined, room };
       });
-      if (!result.rejoined) events.notify(code, { type: "participant", action: "joined", participant: result.participant });
+      if (!result.rejoined) {
+        events.notify(code, { type: "participant", action: "joined", participant: result.participant });
+        if (result.room.others_joined > 0) abandonCandidates.delete(code);
+      }
       return { ...result, invitation: invitationText(result.room, config.publicOrigin) };
     },
 
@@ -406,7 +504,10 @@ export function createApp(config = loadConfig()) {
       );
       if (result.target && result.target !== "ingest") {
         const mp = models.get(`${code}:${result.target.toLowerCase()}`);
-        if (mp) mp.suspendUnavailable(result.seconds * 1000);
+        if (mp) {
+          mp.suspendUnavailable(result.seconds * 1000);
+          recordProfile(mp.profileKey, { wait: result.seconds });
+        }
       }
       events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
       return result;
@@ -431,9 +532,30 @@ export function createApp(config = loadConfig()) {
       return result;
     },
 
-    /** Resolve expired motions in every room that has one. Run by the scheduler and on demand. */
+    /** Resolve expired motions and abandon unjoined rooms. Run by the scheduler and on demand. */
     async tick() {
       const resolved = [];
+      const abandoned = [];
+      const cutoff = Date.now() - config.abandonAfterSeconds * 1000;
+      for (const code of [...abandonCandidates]) {
+        try {
+          const { result, room } = await mutateAndPublish(code, (room) => {
+            if (room.status !== "open" || room.others_joined > 0 || room.human_present || isHumanCreator(room)) return "drop";
+            if (Date.parse(room.created_at) > cutoff) return "keep";
+            return rooms.abandonRoom(room) ? "abandoned" : "drop";
+          });
+          if (result !== "keep") abandonCandidates.delete(code);
+          if (result === "abandoned") {
+            motionRooms.delete(code);
+            events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
+            abandoned.push(code);
+            log(`room ${code} abandoned: nobody joined ${room.created_by.name}`);
+          }
+        } catch (error) {
+          log(`tick abandon ${code}: ${error.message}`);
+          abandonCandidates.delete(code);
+        }
+      }
       for (const code of [...motionRooms]) {
         try {
           const { result, room } = await mutateAndPublish(code, (room) => {
@@ -451,6 +573,7 @@ export function createApp(config = loadConfig()) {
           motionRooms.delete(code);
         }
       }
+      resolved.abandoned = abandoned;
       return resolved;
     },
 
@@ -535,8 +658,8 @@ export function createApp(config = loadConfig()) {
       },
       events: events.counts(),
       models: modelStatuses(),
-      profiles: Object.keys(config.profiles),
-      scheduler: { rooms_with_motions: motionRooms.size },
+      profiles: profileReport(),
+      scheduler: { rooms_with_motions: motionRooms.size, abandon_candidates: abandonCandidates.size, abandon_after_seconds: config.abandonAfterSeconds },
       notifiers: notifier.targets,
       clocks: { window_seconds: config.clocks.window_ms / 1000, hard_seconds: config.clocks.hard_ms / 1000 },
       mcp: { endpoint: `${config.publicOrigin}/mcp`, protocol_versions: mcp.tools ? ["2025-11-25", "2025-06-18", "2025-03-26"] : [] },
@@ -743,7 +866,11 @@ export function createApp(config = loadConfig()) {
     start() {
       for (const w of config.warnings || []) log(`warning: ${w}`);
       bootstrapToken();
-      for (const room of store.listRooms()) if (room.status === "open" && rooms.openMotions(room).length) motionRooms.add(room.code);
+      for (const room of store.listRooms()) {
+        if (room.status !== "open") continue;
+        if (rooms.openMotions(room).length) motionRooms.add(room.code);
+        if (!isHumanCreator(room) && !room.others_joined && !room.human_present) abandonCandidates.add(room.code);
+      }
       this.timer = setInterval(() => service.tick().catch((e) => log(`tick: ${e.message}`)), 5000);
       this.timer.unref();
       return new Promise((resolve, reject) => {

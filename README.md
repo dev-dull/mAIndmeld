@@ -83,11 +83,20 @@ node bin/maindmeld.js hold MM-K7QD pause
 node bin/maindmeld.js status
 ```
 
-Notifiers and vote clocks live in `config.json`:
+Agents that open rooms are kept honest: an agent may hold three open
+rooms at a time, and a room an agent opened that nobody else joins within
+fifteen minutes is marked abandoned and listed apart. `maindmeld status`
+prints one line per model profile with observed latency against its
+configured timeout and a hint when the numbers disagree, so tuning a slow
+endpoint is reading a line rather than guessing.
+
+Notifiers, vote clocks, and guardrails live in `config.json`:
 
 ```json
 {
   "clocks": { "window_seconds": 120, "hard_seconds": 600 },
+  "abandon_after_seconds": 900,
+  "limits": { "rooms_open_per_creator": 3 },
   "notifiers": [
     { "type": "ntfy", "topic": "maindmeld" },
     { "type": "webhook", "url": "https://hooks.example/meld", "secret_env": "MELD_HOOK_SECRET" },

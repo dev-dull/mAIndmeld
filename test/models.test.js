@@ -92,8 +92,10 @@ test("OpenAIChatClient sends the bearer key from the environment and surfaces er
 test("a model participant joins a room, answers others, passes when told, and stays quiet otherwise", async () => {
   const dataDir = tmpDataDir();
   fs.writeFileSync(path.join(dataDir, "config.json"), JSON.stringify({
+    limits: { rooms_open_per_creator: 100 },
     profiles: {
       echo: { base_url: fake.url, model: "fake-1", display_name: "Echo", min_gap_ms: 0, timeout_ms: 5000 },
+      capped: { base_url: fake.url, model: "fake-1", display_name: "Capped", min_gap_ms: 0, timeout_ms: 5000, max_calls_per_hour: 1 },
     },
   }));
   const config = loadConfig({ dataDir, port: 0 }, { USER: "tester" });
@@ -154,6 +156,26 @@ test("a model participant joins a room, answers others, passes when told, and st
     assert.equal(health.data.models.length, 1);
     assert.equal(health.data.models[0].replies, 1);
     assert.ok(health.data.models[0].latency_ms.p50 >= 0);
+    const stats = health.data.profiles.echo;
+    assert.equal(stats.calls, 2, "one reply and one pass");
+    assert.equal(stats.latency_ms.n, 2);
+    assert.equal(stats.failures, 0);
+    assert.equal(stats.hint, null);
+    assert.equal(stats.calls_last_hour, 2);
+
+    // A profile capped at one call per hour answers once and then stays quiet.
+    const capped = await api("POST", "/api/rooms", { title: "cap test", objective: "cap" });
+    const capCode = capped.data.room.code;
+    await api("POST", `/api/rooms/${capCode}/invite`, { kind: "model", profile: "capped" });
+    await api("POST", `/api/rooms/${capCode}/messages`, { sender: "test", content: "first" });
+    await new Promise((r) => setTimeout(r, 2500));
+    await api("POST", `/api/rooms/${capCode}/messages`, { sender: "test", content: "second" });
+    await new Promise((r) => setTimeout(r, 2500));
+    const capRoom = (await api("GET", `/api/rooms/${capCode}`)).data.room;
+    assert.equal(capRoom.messages.filter((m) => m.kind === "model").length, 1, "second call skipped by the hourly cap");
+    const capStats = (await api("GET", "/api/health")).data.profiles.capped;
+    assert.equal(capStats.skipped, 1);
+    assert.equal(capStats.calls_last_hour, 1);
 
     // A call-a-human motion: the model is asked and votes through the endpoint.
     fake.setMode("voteno");
@@ -170,7 +192,7 @@ test("a model participant joins a room, answers others, passes when told, and st
     await api("POST", `/api/rooms/${code}/close`, { name: "Ana", summary: "done" });
     await new Promise((r) => setTimeout(r, 300));
     const after = await api("GET", "/api/health");
-    assert.equal(after.data.models.length, 0, "model participants stop when the room closes");
+    assert.equal(after.data.models.filter((m) => m.room === code).length, 0, "model participants stop when the room closes");
   } finally {
     await app.stop();
     fs.rmSync(dataDir, { recursive: true, force: true });

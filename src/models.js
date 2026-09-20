@@ -223,6 +223,11 @@ export class ModelParticipant {
       if (!addressed) return;
     }
 
+    if (this.hooks.allowCall && !this.hooks.allowCall(this.profileKey)) {
+      this.hooks.log(`model ${this.name} in ${this.code}: hourly call cap for profile ${this.profileKey} reached; staying quiet`);
+      this.lastReplyAt = Date.now();
+      return;
+    }
     this.busy = true;
     this.pendingAgain = false;
     try {
@@ -230,6 +235,7 @@ export class ModelParticipant {
       const { text, ms } = await this.client.complete(turns, { maxTokens: this.profile.maxTokens ?? 600, temperature: this.profile.temperature });
       this.latencies.push(ms);
       if (this.latencies.length > 200) this.latencies.shift();
+      this.hooks.record?.(this.profileKey, { ms });
       this.failures = 0;
       this.lastReplyAt = Date.now();
       if (text.replace(/[\s.]+$/, "").toLowerCase() === PASS) {
@@ -241,6 +247,7 @@ export class ModelParticipant {
       }
     } catch (error) {
       this.failures += 1;
+      this.hooks.record?.(this.profileKey, { failure: true, timeout: /no answer within/.test(error.message) });
       this.hooks.log(`model ${this.name} in ${this.code}: failure ${this.failures}: ${error.message}`);
       if (this.failures >= 3) {
         const pause = Math.min(3_600_000, 600_000 * 2 ** (this.failures - 3));

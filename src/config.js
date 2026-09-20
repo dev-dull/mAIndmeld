@@ -15,9 +15,11 @@ export const DEFAULTS = Object.freeze({
   limits: Object.freeze({
     messagesPerMinute: 120,
     roomsPerHour: 20,
+    roomsOpenPerCreator: 3,
     maxBodyBytes: 64 * 1024,
     maxWaitSeconds: 300,
   }),
+  abandonAfterSeconds: 900,
 });
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -61,6 +63,7 @@ export function loadConfig(overrides = {}, env = process.env) {
   const limits = {
     messagesPerMinute: intFrom(fileLimits.messages_per_minute, DEFAULTS.limits.messagesPerMinute, "messages_per_minute"),
     roomsPerHour: intFrom(fileLimits.rooms_per_hour, DEFAULTS.limits.roomsPerHour, "rooms_per_hour"),
+    roomsOpenPerCreator: intFrom(fileLimits.rooms_open_per_creator, DEFAULTS.limits.roomsOpenPerCreator, "rooms_open_per_creator"),
     maxBodyBytes: intFrom(fileLimits.max_body_bytes, DEFAULTS.limits.maxBodyBytes, "max_body_bytes"),
     maxWaitSeconds: intFrom(fileLimits.max_wait_seconds, DEFAULTS.limits.maxWaitSeconds, "max_wait_seconds"),
   };
@@ -98,9 +101,11 @@ export function loadConfig(overrides = {}, env = process.env) {
       minGapMs: intFrom(p.min_gap_ms, 3000, `profile ${key} min_gap_ms`),
       window: intFrom(p.window, 40, `profile ${key} window`),
       maxTokens: intFrom(p.max_tokens, 600, `profile ${key} max_tokens`),
+      maxCallsPerHour: intFrom(p.max_calls_per_hour, 120, `profile ${key} max_calls_per_hour`),
       temperature: p.temperature === undefined ? undefined : Number(p.temperature),
     };
   }
+  const abandonAfterSeconds = intFrom(file.abandon_after_seconds, DEFAULTS.abandonAfterSeconds, "abandon_after_seconds");
 
   const clocksFile = file.clocks && typeof file.clocks === "object" ? file.clocks : {};
   const clocks = {
@@ -126,6 +131,7 @@ export function loadConfig(overrides = {}, env = process.env) {
     profiles,
     clocks,
     notifiers,
+    abandonAfterSeconds,
     publicOrigin: configuredOrigin ? configuredOrigin.replace(/\/$/, "") : `http://${isLoopback(bind) ? "127.0.0.1" : "localhost"}:${port}`,
     allowedOrigins: origins,
     warnings,
@@ -148,6 +154,7 @@ export function describeConfig(config) {
     human_name: config.humanName,
     session_days: config.sessionDays,
     clocks: { window_seconds: config.clocks.window_ms / 1000, hard_seconds: config.clocks.hard_ms / 1000 },
+    abandon_after_seconds: config.abandonAfterSeconds,
     notifiers: (config.notifiers || []).map((n) => ({ type: n.type, url: n.url, topic: n.topic, secret_set: Boolean(n.secret), token_set: Boolean(n.token) })),
     profiles: Object.fromEntries(Object.entries(config.profiles || {}).map(([k, p]) => [k, {
       base_url: p.baseUrl,
@@ -160,10 +167,12 @@ export function describeConfig(config) {
       min_gap_ms: p.minGapMs,
       window: p.window,
       max_tokens: p.maxTokens,
+      max_calls_per_hour: p.maxCallsPerHour,
     }])),
     limits: {
       messages_per_minute: config.limits.messagesPerMinute,
       rooms_per_hour: config.limits.roomsPerHour,
+      rooms_open_per_creator: config.limits.roomsOpenPerCreator,
       max_body_bytes: config.limits.maxBodyBytes,
       max_wait_seconds: config.limits.maxWaitSeconds,
     },

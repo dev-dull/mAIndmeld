@@ -189,6 +189,10 @@ class Cli {
     const rooms = Object.entries(h.rooms).map(([k, v]) => `${v} ${k}`).join(", ") || "no rooms";
     this.io.out(`mAIndmeld ${h.version} at ${h.public_origin}, up ${h.uptime_s}s, ${rooms}`);
     this.io.out(`limits: ${h.limits.messages_per_minute} msg/min, ${h.limits.rooms_per_hour} rooms/h; ${h.events.subscribers} subscribers, ${h.events.waiters} waiting`);
+    for (const [key, p] of Object.entries(h.profiles || {})) {
+      const lat = p.latency_ms.n ? `p50 ${p.latency_ms.p50} ms, p95 ${p.latency_ms.p95} ms over ${p.latency_ms.n}` : "no calls yet";
+      this.io.out(`profile ${key} (${p.model}): ${lat}; timeout ${p.timeout_ms} ms; ${p.failures} failed, ${p.timeouts} timed out, ${p.waits} waits, ${p.skipped} skipped, ${p.calls_last_hour}/${p.max_calls_per_hour} this hour${p.hint ? `\n  hint: ${p.hint}` : ""}`);
+    }
   }
 
   async open(code) {
