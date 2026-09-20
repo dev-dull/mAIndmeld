@@ -22,6 +22,9 @@ Server
 Rooms
   rooms                         list rooms
   say CODE "text"               post as the configured human (joins first)
+  invite CODE --model PROFILE   add a model participant from a config profile
+  invite CODE --human           flag the room as needing a human
+  invite CODE                   print the invitation text for another session
 
 Administration
   token create NAME | list | revoke NAME
@@ -204,6 +207,21 @@ class Cli {
     this.io.out(`#${message.id} ${message.sender}: ${message.content}`);
   }
 
+  async invite(code, flags) {
+    if (!code) throw new Error("usage: maindmeld invite CODE --model PROFILE [--name NAME] | --human [--reason TEXT]");
+    const c = code.toUpperCase();
+    if (flags.model) {
+      const result = await this.api("POST", `/api/rooms/${c}/invite`, { kind: "model", profile: flags.model, name: flags.name });
+      this.io.out(`${result.rejoined ? "already in" : "joined"} ${c}: ${result.participant.name} (${result.participant.profile})`);
+    } else if (flags.human) {
+      await this.api("POST", `/api/rooms/${c}/invite`, { kind: "human", reason: typeof flags.reason === "string" ? flags.reason : undefined });
+      this.io.out(`${c} now needs a human`);
+    } else {
+      const result = await this.api("POST", `/api/rooms/${c}/invite`, { kind: "session", name: typeof flags.session === "string" ? flags.session : undefined });
+      this.io.out(result.invitation);
+    }
+  }
+
   async token(action, name) {
     const auth = new Auth(new Store(this.config.dataDir));
     if (action === "create") {
@@ -241,6 +259,7 @@ export async function run(argv = process.argv.slice(2)) {
     open: () => cli.open(args[0]),
     rooms: () => cli.rooms(),
     say: () => cli.say(args[0], args.slice(1).join(" ")),
+    invite: () => cli.invite(args[0], flags),
     token: () => cli.token(args[0], args[1]),
     config: () => (args[0] === "show" ? cli.configShow() : Promise.reject(new Error("usage: maindmeld config show"))),
   };

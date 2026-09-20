@@ -9,6 +9,18 @@ export class RoomEvents {
     this.waiters = new Map(); // code -> Set<resolve>
     this.subscribers = new Map(); // code -> Set<res>
     this.lobby = new Set(); // Set<res>
+    this.listeners = new Map(); // code -> Set<fn>, in-process consumers such as model participants
+  }
+
+  /** In-process listener for a room's events. Returns an unsubscribe function. */
+  on(code, fn) {
+    const set = this.listeners.get(code) || new Set();
+    set.add(fn);
+    this.listeners.set(code, set);
+    return () => {
+      set.delete(fn);
+      if (set.size === 0) this.listeners.delete(code);
+    };
   }
 
   /** Resolve after a change to the room or after `seconds`, whichever first. */
@@ -33,6 +45,13 @@ export class RoomEvents {
     const payload = `event: ${event.type}\ndata: ${JSON.stringify({ code, ...event })}\n\n`;
     for (const res of this.subscribers.get(code) || []) this.write(res, payload);
     for (const res of this.lobby) this.write(res, payload);
+    for (const fn of [...(this.listeners.get(code) || [])]) {
+      try {
+        fn({ code, ...event });
+      } catch {
+        // A listener's failure must never break delivery to others.
+      }
+    }
   }
 
   write(res, payload) {

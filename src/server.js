@@ -11,6 +11,7 @@ import { Store, isRoomCode, FormatTooNewError } from "./store.js";
 import * as rooms from "./rooms.js";
 import { Auth, AuthError } from "./auth.js";
 import { RoomEvents } from "./events.js";
+import { ModelParticipant } from "./models.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const VERSION = JSON.parse(fs.readFileSync(path.join(here, "..", "package.json"), "utf8")).version;
@@ -63,6 +64,7 @@ export function createApp(config = loadConfig()) {
   const limiter = new RateLimiter();
   const startedAt = Date.now();
   const queues = new Map(); // per-room promise chain, belt and braces (DESIGN.md 3.1)
+  const models = new Map(); // `${code}:${name}` -> ModelParticipant
   const quiet = process.env.MAINDMELD_QUIET === "1";
   const log = (line) => {
     if (!quiet) process.stdout.write(`${new Date().toISOString()} ${line}\n`);
@@ -139,6 +141,47 @@ export function createApp(config = loadConfig()) {
     if (!ok) throw new HttpError(429, `rate limit hit: ${kind === "messages" ? `${config.limits.messagesPerMinute} messages per minute` : `${config.limits.roomsPerHour} rooms per hour`}`, { limit: kind });
   }
 
+  // ---- model participants ----
+
+  const modelHooks = {
+    loadRoom: (code) => store.loadRoom(code),
+    on: (code, fn) => events.on(code, fn),
+    log,
+    async post(code, name, text) {
+      const message = await withRoom(code, (room) => rooms.sendMessage(room, { sender: name, content: text }, config.limits.maxBodyBytes));
+      events.notify(code, { type: "message", message });
+    },
+    async system(code, text) {
+      const message = await withRoom(code, (room) => rooms.addSystemMessage(room, text));
+      events.notify(code, { type: "message", message });
+    },
+  };
+
+  async function inviteModel(code, profileKey, requestedName) {
+    const profile = config.profiles[profileKey];
+    if (!profile) throw new HttpError(404, `no model profile named ${profileKey}; configured: ${Object.keys(config.profiles).join(", ") || "none"}`);
+    const name = rooms.cleanName(requestedName || profile.displayName);
+    const key = `${code}:${name.toLowerCase()}`;
+    if (models.has(key)) return { participant: models.get(key).status(), rejoined: true };
+    const { participant } = await withRoom(code, (room) => rooms.joinRoom(room, { name, kind: "model", client: profileKey }));
+    events.notify(code, { type: "participant", action: "joined", participant });
+    const mp = new ModelParticipant({ code, name, profileKey, profile, hooks: modelHooks }).start();
+    models.set(key, mp);
+    log(`model ${name} (${profileKey}) joined ${code}`);
+    // Let it read the room as it stands and speak if it has something to say.
+    mp.schedule();
+    return { participant: mp.status(), rejoined: false };
+  }
+
+  function modelStatuses() {
+    const out = [];
+    for (const [key, mp] of models) {
+      if (mp.stopped) models.delete(key);
+      else out.push(mp.status());
+    }
+    return out;
+  }
+
   // ---- API handlers ----
 
   function health() {
@@ -157,6 +200,8 @@ export function createApp(config = loadConfig()) {
         max_wait_seconds: config.limits.maxWaitSeconds,
       },
       events: events.counts(),
+      models: modelStatuses(),
+      profiles: Object.keys(config.profiles),
       public_origin: config.publicOrigin,
     };
   }
@@ -285,6 +330,37 @@ export function createApp(config = loadConfig()) {
         );
         events.notify(code, { type: "message", message });
         return send(res, 201, { message });
+      }
+      case "invite": {
+        const kind = String(body.kind ?? "session");
+        if (kind === "model") {
+          const result = await inviteModel(code, String(body.profile ?? ""), body.name);
+          return send(res, 200, result);
+        }
+        if (kind === "human") {
+          const changed = await withRoom(code, (room) => {
+            if (room.status !== "open") throw new HttpError(409, `room ${code} is ${room.status}`);
+            if (room.human_required) return false;
+            room.human_required = true;
+            rooms.addSystemMessage(room, `${principal.name} asked for a human to join.${body.reason ? ` Reason: ${body.reason}` : ""}`);
+            return true;
+          });
+          if (changed) {
+            const room = store.loadRoom(code);
+            events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
+            events.notify(code, { type: "message", message: room.messages.at(-1) });
+          }
+          return send(res, 200, { ok: true, human_required: true });
+        }
+        if (kind === "session") {
+          const room = store.loadRoom(code);
+          if (!room) throw new HttpError(404, `no room ${code}`);
+          const target = body.name ? rooms.cleanName(body.name, "invitee") : null;
+          await withRoom(code, (r) => rooms.addSystemMessage(r, `${principal.name} invited ${target || "another session"}.`));
+          events.notify(code, { type: "message", message: store.loadRoom(code).messages.at(-1) });
+          return send(res, 200, { invitation: invitationText(room, config.publicOrigin), deliver: "Send this text to the session yourself; the server cannot reach it." });
+        }
+        throw new HttpError(400, "kind must be session, model, or human");
       }
       case "mode": {
         const changed = await withRoom(code, (room) => rooms.setResponseMode(room, body.response_mode, principal.name));
@@ -453,6 +529,8 @@ export function createApp(config = loadConfig()) {
       });
     },
     stop() {
+      for (const mp of models.values()) mp.stop();
+      models.clear();
       for (const set of events.subscribers.values()) for (const res of set) res.end();
       for (const res of events.lobby) res.end();
       return new Promise((resolve) => server.close(() => resolve()));

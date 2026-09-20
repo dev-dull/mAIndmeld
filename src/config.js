@@ -81,11 +81,33 @@ export function loadConfig(overrides = {}, env = process.env) {
     }
   }
 
+  const profiles = {};
+  for (const [key, p] of Object.entries(file.profiles || {})) {
+    if (!p || typeof p !== "object") throw new Error(`profile ${key} must be an object`);
+    if (!p.base_url || !p.model) throw new Error(`profile ${key} needs base_url and model`);
+    if (!/^[A-Za-z0-9_.-]{1,40}$/.test(key)) throw new Error(`profile key ${key} must be letters, digits, dot, dash, or underscore`);
+    profiles[key] = {
+      baseUrl: String(p.base_url),
+      model: String(p.model),
+      apiKeyEnv: p.api_key_env ? String(p.api_key_env) : null,
+      displayName: p.display_name ? String(p.display_name) : key,
+      systemPrompt: p.system_prompt ? String(p.system_prompt) : null,
+      extra: p.extra && typeof p.extra === "object" ? p.extra : {},
+      timeoutMs: intFrom(p.timeout_ms, 120_000, `profile ${key} timeout_ms`),
+      replyBudget: intFrom(p.reply_budget, 30, `profile ${key} reply_budget`),
+      minGapMs: intFrom(p.min_gap_ms, 3000, `profile ${key} min_gap_ms`),
+      window: intFrom(p.window, 40, `profile ${key} window`),
+      maxTokens: intFrom(p.max_tokens, 600, `profile ${key} max_tokens`),
+      temperature: p.temperature === undefined ? undefined : Number(p.temperature),
+    };
+  }
+
   return {
     dataDir,
     configFile,
     bind,
     port,
+    profiles,
     publicOrigin: configuredOrigin ? configuredOrigin.replace(/\/$/, "") : `http://${isLoopback(bind) ? "127.0.0.1" : "localhost"}:${port}`,
     allowedOrigins: origins,
     warnings,
@@ -107,6 +129,18 @@ export function describeConfig(config) {
     allowed_origins: [...config.allowedOrigins],
     human_name: config.humanName,
     session_days: config.sessionDays,
+    profiles: Object.fromEntries(Object.entries(config.profiles || {}).map(([k, p]) => [k, {
+      base_url: p.baseUrl,
+      model: p.model,
+      display_name: p.displayName,
+      api_key_env: p.apiKeyEnv,
+      key_present: p.apiKeyEnv ? Boolean(process.env[p.apiKeyEnv]) : null,
+      timeout_ms: p.timeoutMs,
+      reply_budget: p.replyBudget,
+      min_gap_ms: p.minGapMs,
+      window: p.window,
+      max_tokens: p.maxTokens,
+    }])),
     limits: {
       messages_per_minute: config.limits.messagesPerMinute,
       rooms_per_hour: config.limits.roomsPerHour,
