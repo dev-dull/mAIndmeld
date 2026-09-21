@@ -33,9 +33,10 @@ test("a room an agent opened and nobody joined is abandoned after the window; jo
     const human = (await s.req("POST", "/api/rooms", { body: { title: "human", name: "Ana", kind: "human" } })).data.room.code;
     await s.req("POST", `/api/rooms/${lonely}/motions`, { body: { type: "call_human", reason: "anyone?", name: "bot" } });
 
+    assert.ok(Date.now() - started < 2500, "setup took too long for this test's window; raise abandon_after_seconds");
     let tick = await s.app.service.tick();
-    if (Date.now() - started < 2500) assert.deepEqual(tick.abandoned, [], "not before the window");
-    await new Promise((r) => setTimeout(r, Math.max(0, 3300 - (Date.now() - started))));
+    assert.deepEqual(tick.abandoned, [], "not before the window");
+    await new Promise((r) => setTimeout(r, Math.max(0, 3400 - (Date.now() - started))));
     tick = await s.app.service.tick();
     assert.deepEqual(tick.abandoned, [lonely]);
     const room = await get(s, lonely);
@@ -48,7 +49,7 @@ test("a room an agent opened and nobody joined is abandoned after the window; jo
     assert.equal(list.data.rooms.length, 1);
     const health = await s.req("GET", "/api/health");
     assert.equal(health.data.scheduler.abandon_candidates, 0);
-    assert.equal(health.data.scheduler.abandon_after_seconds, 1);
+    assert.equal(health.data.scheduler.abandon_after_seconds, 3);
     assert.equal((await s.req("POST", `/api/rooms/${lonely}/join`, { body: { name: "late" } })).status, 409);
   } finally {
     await s.close();
