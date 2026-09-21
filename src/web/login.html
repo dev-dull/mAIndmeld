@@ -4,11 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sign in · mAIndmeld</title>
+  <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body data-page="login">
   <form class="login" id="login-form">
-    <h1>mAIndmeld</h1>
+    <h1><img src="/static/logo.svg" alt="" width="40" height="40" style="vertical-align: -8px; margin-right: 0.4rem">mAIndmeld</h1>
     <p>Paste a token to sign in. The server printed one when it first started; an administrator can create more with <code>maindmeld token create</code>.</p>
     <label>Token <input id="token" required autocomplete="off" spellcheck="false" placeholder="mm_…"></label>
     <label>Your name <input id="name" maxlength="80" placeholder="How you appear in rooms"></label>

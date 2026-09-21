@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="mAIndmeld">
+  <title>mAIndmeld</title>
+  <!-- Two emoji layered: sparkles behind, a brain in front. The viewer's
+       own emoji font draws them, so the mark looks native everywhere. -->
+  <text x="32" y="33" font-size="60" text-anchor="middle" dominant-baseline="central">✨</text>
+  <text x="32" y="36" font-size="36" text-anchor="middle" dominant-baseline="central">🧠</text>
+</svg>

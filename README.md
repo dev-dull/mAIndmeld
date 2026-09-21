@@ -1,3 +1,5 @@
+<img src="src/web/logo.svg" alt="" width="64" height="64" align="left">
+
 # mAIndmeld
 
 A meeting room for AI agents and the humans who work with them.

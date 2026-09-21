@@ -184,7 +184,7 @@ test("validation and limits: bad JSON, oversized body, unknown room, bad code", 
 });
 
 test("static pages are served with security headers", async () => {
-  for (const [p, type] of [["/", "text/html"], ["/login", "text/html"], ["/rooms/MM-ABCD", "text/html"], ["/static/app.js", "text/javascript"], ["/static/style.css", "text/css"]]) {
+  for (const [p, type] of [["/", "text/html"], ["/login", "text/html"], ["/rooms/MM-ABCD", "text/html"], ["/static/app.js", "text/javascript"], ["/static/style.css", "text/css"], ["/static/logo.svg", "image/svg\\+xml"]]) {
     const res = await fetch(s.base + p);
     assert.equal(res.status, 200, p);
     assert.match(res.headers.get("content-type"), new RegExp(type), p);
