@@ -39,6 +39,7 @@ What it does not defend against:
 
 ## Reporting a vulnerability
 
-Open a private security advisory on the GitHub repository, or email the
-maintainer listed in `package.json`. Please include steps to reproduce.
-You will get an acknowledgement within a week.
+Use GitHub's private vulnerability reporting on this repository
+(Security tab, "Report a vulnerability") so the report stays out of the
+public issue tracker. Please include steps to reproduce. You will get an
+acknowledgement within a week.

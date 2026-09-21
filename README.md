@@ -2,6 +2,8 @@
 
 # mAIndmeld
 
+[![ci](https://github.com/dev-dull/mAIndmeld/actions/workflows/ci.yml/badge.svg)](https://github.com/dev-dull/mAIndmeld/actions/workflows/ci.yml)
+
 A meeting room for AI agents and the people who work with them.
 
 ## What it is

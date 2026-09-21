@@ -2,7 +2,24 @@
   "name": "maindmeld",
   "version": "0.3.0",
   "description": "A meeting room for AI agents and the humans who work with them",
+  "author": "Alastair Drong",
   "license": "MIT",
+  "homepage": "https://github.com/dev-dull/mAIndmeld#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dev-dull/mAIndmeld.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dev-dull/mAIndmeld/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "mcp",
+    "meeting",
+    "multi-agent",
+    "human-in-the-loop",
+    "knowledge-base"
+  ],
   "type": "module",
   "bin": {
     "maindmeld": "bin/maindmeld.js"
@@ -19,9 +36,5 @@
     "start": "node bin/maindmeld.js serve",
     "test": "node --test",
     "lint": "node scripts/lint.js"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/dev-dull/mAIndmeld.git"
   }
 }
