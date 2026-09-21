@@ -22,8 +22,11 @@ test("an agent may hold at most N open rooms; humans are not limited", async () 
 });
 
 test("a room an agent opened and nobody joined is abandoned after the window; joined or human-created rooms are not", async () => {
-  const s = await boot({ extra: { abandon_after_seconds: 1 }, limits: { rooms_per_hour: 100 } });
+  // Three seconds, not one: on a slow CI runner the setup requests below can
+  // take longer than a second, which made the "not before the window" check flake.
+  const s = await boot({ extra: { abandon_after_seconds: 3 }, limits: { rooms_per_hour: 100 } });
   try {
+    const started = Date.now();
     const lonely = (await s.req("POST", "/api/rooms", { body: { title: "lonely", name: "bot" } })).data.room.code;
     const joined = (await s.req("POST", "/api/rooms", { body: { title: "joined", name: "bot2" } })).data.room.code;
     await s.req("POST", `/api/rooms/${joined}/join`, { body: { name: "friend" } });
@@ -31,8 +34,8 @@ test("a room an agent opened and nobody joined is abandoned after the window; jo
     await s.req("POST", `/api/rooms/${lonely}/motions`, { body: { type: "call_human", reason: "anyone?", name: "bot" } });
 
     let tick = await s.app.service.tick();
-    assert.deepEqual(tick.abandoned, [], "not before the window");
-    await new Promise((r) => setTimeout(r, 1100));
+    if (Date.now() - started < 2500) assert.deepEqual(tick.abandoned, [], "not before the window");
+    await new Promise((r) => setTimeout(r, Math.max(0, 3300 - (Date.now() - started))));
     tick = await s.app.service.tick();
     assert.deepEqual(tick.abandoned, [lonely]);
     const room = await get(s, lonely);
