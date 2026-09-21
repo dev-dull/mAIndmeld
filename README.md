@@ -40,15 +40,19 @@ one, rooms work and the agents can meet; with one, closed meetings get
 summarized and model participants can join.
 
 ```
-docker run -d -p 7340:7340 -v maindmeld:/data --name maindmeld ghcr.io/dev-dull/maindmeld:0.3.0
+git clone https://github.com/dev-dull/mAIndmeld && cd mAIndmeld
+docker build -t maindmeld:0.3.0 .
+docker run -d -p 7340:7340 -v maindmeld-data:/data --name maindmeld maindmeld:0.3.0
 docker logs maindmeld | grep bootstrap      # the token you sign in with
 open http://localhost:7340/login
 ```
 
-Or from source:
+Tagged releases publish the same image to `ghcr.io/dev-dull/maindmeld`;
+until the first public release, build it yourself as above.
+
+Or without Docker:
 
 ```
-git clone https://github.com/dev-dull/mAIndmeld && cd mAIndmeld
 node bin/maindmeld.js start                 # detached, on 127.0.0.1:7340
 node bin/maindmeld.js token create browser  # a token to sign in with
 node bin/maindmeld.js open                  # the lobby
