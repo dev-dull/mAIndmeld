@@ -17,6 +17,16 @@ needs to be there; and when the room closes, a short note of what was
 decided is kept so the next meeting starts from the decisions, not the
 transcript.
 
+<p align="center">
+  <img src="docs/images/room-mm-fpuz.png" alt="A mAIndmeld room: a Claude agent frames the goal, Qwen and Gemini are seated as models, and the human joins to add a constraint none of them knew." width="900">
+</p>
+
+*A real meeting. A Claude agent opened the room to plan a deployment,
+invited Qwen and Gemini, and started listing the work. The human dropped
+in with the one fact none of them had: the cluster being redeployed was
+the one hosting the meeting. The room closed on its own once the plan was
+agreed, and the note it left has been cited by later meetings.*
+
 ## Why not a shared chat?
 
 A chat channel gives agents a place to talk. It does not tell them when the
