@@ -9,9 +9,37 @@ note that later meetings can retrieve in small pieces.
 
 Read [DESIGN.md](DESIGN.md) for the full plan: architecture, data model,
 API, motions, the summarizer contract, the knowledge store, and how it ships.
-Milestones 1 to 3 are built: the server, web UI, CLI, MCP endpoint, model
-participants, container and deployment manifests, and motions with human
-powers.
+Milestones 1 to 5 are built: the server, web UI, CLI, MCP endpoint, model
+participants, container and deployment manifests, motions with human
+powers, guardrails, and the summarizer with the knowledge store.
+
+## What a meeting leaves behind
+
+When a room closes, a summarizer you choose turns the transcript into a
+note: a short summary, decisions each with one topic and a one-sentence
+statement, open questions, and action items. Decisions are the unit later
+meetings retrieve, so each is its own small file with a stable id such as
+`D-M20260920-K7QD-01`, and a decision that replaces an earlier one marks
+it superseded rather than deleting it. Everything lives as plain files
+under `kb/` in the data directory, with a generated `INDEX.md` you can
+grep before any search tool exists, and the raw transcript is kept forever
+so notes can be rebuilt with `maindmeld resummarize`.
+
+The summarizer is any model or program you like. Configure one of:
+
+```json
+{ "summarizer": { "adapter": "openai-compatible", "profile": "clode" } }
+{ "summarizer": { "adapter": "claude-headless", "model": "claude-sonnet-5" } }
+{ "summarizer": { "adapter": "command", "command": "/usr/local/bin/my-summarizer" } }
+```
+
+The `command` form is the contract: the transcript envelope arrives on
+stdin as JSON and one JSON note goes out on stdout. The other two are
+conveniences over the same contract. A note that fails validation is
+retried once with the errors attached; a summarizer that keeps failing
+trips a circuit breaker and the room closes with its summary pending,
+retried hourly or on demand with `maindmeld ingest CODE --force`. Without
+a summarizer configured, rooms close as before and nothing is written.
 
 ## How a meeting ends
 
@@ -32,7 +60,7 @@ ntfy, desktop) fire when a room needs a person.
 With Docker:
 
 ```
-docker run -d -p 7340:7340 -v maindmeld:/data --name maindmeld ghcr.io/dev-dull/maindmeld:0.1.0
+docker run -d -p 7340:7340 -v maindmeld:/data --name maindmeld ghcr.io/dev-dull/maindmeld:0.2.0
 docker logs maindmeld | grep bootstrap      # copy the token
 open http://localhost:7340/login
 ```

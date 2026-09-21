@@ -107,6 +107,29 @@ export function loadConfig(overrides = {}, env = process.env) {
   }
   const abandonAfterSeconds = intFrom(file.abandon_after_seconds, DEFAULTS.abandonAfterSeconds, "abandon_after_seconds");
 
+  let summarizer = null;
+  if (file.summarizer && typeof file.summarizer === "object") {
+    const s = file.summarizer;
+    const adapter = String(s.adapter || "");
+    if (!["openai-compatible", "claude-headless", "command"].includes(adapter)) throw new Error(`summarizer.adapter must be openai-compatible, claude-headless, or command`);
+    if (adapter === "openai-compatible" && !s.profile) throw new Error("summarizer.profile is required for the openai-compatible adapter");
+    if (adapter === "command" && !s.command) throw new Error("summarizer.command is required for the command adapter");
+    let prompt = null;
+    if (s.prompt_file) prompt = fs.readFileSync(path.resolve(path.dirname(configFile), String(s.prompt_file)), "utf8");
+    summarizer = {
+      adapter,
+      profile: s.profile ? String(s.profile) : null,
+      command: s.command ? String(s.command) : null,
+      args: Array.isArray(s.args) ? s.args.map(String) : [],
+      model: s.model ? String(s.model) : null,
+      prompt,
+      timeoutMs: intFrom(s.timeout_ms, 180_000, "summarizer.timeout_ms"),
+    };
+  }
+  const kbDir = path.resolve(file.kb_dir ? String(file.kb_dir) : path.join(dataDir, "kb"));
+  const closingMaxSeconds = intFrom(file.closing_max_seconds, 1800, "closing_max_seconds");
+  const ingestRetrySeconds = intFrom(file.ingest_retry_seconds, 3600, "ingest_retry_seconds");
+
   const clocksFile = file.clocks && typeof file.clocks === "object" ? file.clocks : {};
   const clocks = {
     window_ms: intFrom(clocksFile.window_seconds, 120, "clocks.window_seconds") * 1000,
@@ -132,6 +155,10 @@ export function loadConfig(overrides = {}, env = process.env) {
     clocks,
     notifiers,
     abandonAfterSeconds,
+    summarizer,
+    kbDir,
+    closingMaxSeconds,
+    ingestRetrySeconds,
     publicOrigin: configuredOrigin ? configuredOrigin.replace(/\/$/, "") : `http://${isLoopback(bind) ? "127.0.0.1" : "localhost"}:${port}`,
     allowedOrigins: origins,
     warnings,
@@ -155,6 +182,10 @@ export function describeConfig(config) {
     session_days: config.sessionDays,
     clocks: { window_seconds: config.clocks.window_ms / 1000, hard_seconds: config.clocks.hard_ms / 1000 },
     abandon_after_seconds: config.abandonAfterSeconds,
+    kb_dir: config.kbDir,
+    closing_max_seconds: config.closingMaxSeconds,
+    ingest_retry_seconds: config.ingestRetrySeconds,
+    summarizer: config.summarizer ? { adapter: config.summarizer.adapter, profile: config.summarizer.profile, command: config.summarizer.command, model: config.summarizer.model, timeout_ms: config.summarizer.timeoutMs, prompt_overridden: Boolean(config.summarizer.prompt) } : null,
     notifiers: (config.notifiers || []).map((n) => ({ type: n.type, url: n.url, topic: n.topic, secret_set: Boolean(n.secret), token_set: Boolean(n.token) })),
     profiles: Object.fromEntries(Object.entries(config.profiles || {}).map(([k, p]) => [k, {
       base_url: p.baseUrl,

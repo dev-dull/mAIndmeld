@@ -68,11 +68,28 @@ function initLogin() {
 
 function roomCard(r) {
   const people = r.participants.map((p) => `<span class="badge ${p.kind}">${esc(p.name)}</span>`).join(" ");
+  const note = r.ingest?.note_id ? `<a href="/notes/${esc(r.ingest.note_id)}">note ${esc(r.ingest.note_id)}</a>` : r.status === "closing" ? "summarizing…" : r.ingest?.status === "pending" ? "summary pending" : "";
   return `<a class="room-card ${r.human_required && !r.human_present ? "needs" : ""}" href="/rooms/${r.code}">
-    <div class="title">${esc(r.title)} <span class="badge status">${esc(r.status)}</span></div>
-    <div class="meta"><span>${r.code}</span><span>${r.message_count} messages</span><span>${ago(r.updated_at)}</span></div>
+    <div class="title">${esc(r.title)} <span class="badge status ${r.status === "closing" ? "closing" : ""}">${esc(r.status)}</span></div>
+    <div class="meta"><span>${r.code}</span><span>${r.message_count} messages</span><span>${ago(r.updated_at)}</span>${note ? `<span>${note}</span>` : ""}</div>
     <div class="meta">${people || '<span class="empty">nobody here</span>'}</div>
   </a>`;
+}
+
+function initNote() {
+  whoAmI().catch(() => {});
+  const id = location.pathname.split("/")[2];
+  api("GET", `/api/kb/meetings/${id}`).then(({ meeting }) => {
+    document.title = `${meeting.title} · mAIndmeld`;
+    $("#note-title").textContent = meeting.title;
+    $("#note-meta").innerHTML = [
+      `<span>${esc(meeting.date)}</span>`,
+      `<span><a href="/rooms/${esc(meeting.room)}">room ${esc(meeting.room)}</a></span>`,
+      `<span>${(meeting.decisions || []).length} decisions</span>`,
+      `<span>${(meeting.topics || []).map((t) => `<span class="badge status">${esc(t)}</span>`).join(" ")}</span>`,
+    ].join("");
+    $("#note").textContent = meeting.markdown.replace(/^---[\s\S]*?---\n\n?/, "");
+  }).catch((e) => { $("#note").textContent = e.message; });
 }
 
 async function renderLobby() {
@@ -80,7 +97,7 @@ async function renderLobby() {
   const groups = {
     needs: rooms.filter((r) => r.status === "open" && r.human_required && !r.human_present),
     open: rooms.filter((r) => r.status === "open" && !(r.human_required && !r.human_present)),
-    closed: rooms.filter((r) => r.status === "closed" || r.status === "closing").slice(0, 20),
+    closed: rooms.filter((r) => r.status === "closed" || r.status === "closing").slice(0, 30),
     abandoned: rooms.filter((r) => r.status === "abandoned"),
   };
   for (const [key, list] of Object.entries(groups)) {
@@ -224,6 +241,18 @@ function renderRoomMeta(room) {
     held.textContent = `On hold by ${room.held.by} since ${timeOf(room.held.since)}. No motion resolves until resumed.`;
     held.classList.remove("hidden");
   } else held.classList.add("hidden");
+
+  const ingest = $("#ingest-box");
+  if (room.status === "closing" || (room.status === "closed" && room.ingest && room.ingest.status !== "skipped")) {
+    ingest.classList.remove("hidden");
+    const i = room.ingest || {};
+    const state = room.status === "closing" ? `Summarizing… (attempt ${i.attempts || 0}${i.last_error ? `, last error: ${i.last_error}` : ""})` : i.status === "done" ? `Summary written.` : `Summary ${i.status}${i.last_error ? `: ${i.last_error}` : ""}`;
+    $("#ingest-state").textContent = state;
+    $("#note-link").classList.toggle("hidden", !i.note_id);
+    if (i.note_id) $("#note-link").href = `/notes/${i.note_id}`;
+    $("#ingest-retry").classList.toggle("hidden", i.status === "done" || i.status === "running");
+    $("#ingest-skip").classList.toggle("hidden", room.status !== "closing");
+  } else ingest.classList.add("hidden");
   $("#hold-btn").classList.toggle("on", Boolean(room.held));
   $("#hold-btn").textContent = room.held ? "Resume the room" : "Hold the room";
   $("#hold-btn").disabled = closed;
@@ -294,6 +323,8 @@ function initRoom() {
       toast(error.message);
     }
   });
+  $("#ingest-retry").addEventListener("click", () => api("POST", `/api/rooms/${code}/ingest`, { force: true }).then(() => toast("Summary requested")).catch((e) => toast(e.message)));
+  $("#ingest-skip").addEventListener("click", () => api("POST", `/api/rooms/${code}/ingest`, { action: "skip" }).then(() => toast("Closed without a note")).catch((e) => toast(e.message)));
   $("#ack-btn").addEventListener("click", () => api("POST", `/api/rooms/${code}/human`, { action: "acknowledge" }).then(() => toast("Acknowledged")).catch((e) => toast(e.message)));
   $("#dismiss-btn").addEventListener("click", () => api("POST", `/api/rooms/${code}/human`, { action: "dismiss" }).then(() => toast("Dismissed the call")).catch((e) => toast(e.message)));
 
@@ -349,3 +380,4 @@ const page = document.body.dataset.page;
 if (page === "login") initLogin();
 if (page === "lobby") initLobby();
 if (page === "room") initRoom();
+if (page === "note") initNote();

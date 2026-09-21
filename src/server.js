@@ -16,6 +16,8 @@ import { RoomEvents } from "./events.js";
 import { ModelParticipant } from "./models.js";
 import { createMcp } from "./mcp.js";
 import { createNotifier } from "./notify.js";
+import { KnowledgeStore, meetingIdFor } from "./kb.js";
+import { buildEnvelope, createAdapter, summarize, Breaker } from "./summarize.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const VERSION = JSON.parse(fs.readFileSync(path.join(here, "..", "package.json"), "utf8")).version;
@@ -164,8 +166,98 @@ export function createApp(config = loadConfig()) {
   const notifier = createNotifier(config, log);
   const motionRooms = new Set(); // rooms with an open motion, for the scheduler
   const abandonCandidates = new Set(); // open rooms an agent or model created that nobody else has joined
+  const closingRooms = new Set(); // rooms in `closing`, watched for the maximum age
+  const pendingIngests = new Set(); // rooms whose ingest gave up and awaits a retry
 
   const isHumanCreator = (room) => room.created_by.kind === "human";
+
+  // ---- ingest: close handoff into the knowledge store (DESIGN.md 10, 11) ----
+
+  const kb = new KnowledgeStore(config.kbDir);
+  const adapter = createAdapter(config); // null when no summarizer is configured
+  const breaker = new Breaker();
+  const ledgerFile = store.filePath("ingested.json");
+  let ingestChain = Promise.resolve();
+  let ingestRunning = null;
+
+  function ledgerWrite(code, entry) {
+    const ledger = store.readJSON(ledgerFile, { format: 1, rooms: {} });
+    ledger.rooms[code] = { ...(ledger.rooms[code] || {}), ...entry, updated_at: new Date().toISOString() };
+    store.writeJSON(ledgerFile, ledger);
+  }
+
+  /** Queue an ingest; runs one at a time, never throws to the caller. */
+  function enqueueIngest(code, { force = false } = {}) {
+    const job = ingestChain.then(() => runIngest(code, { force })).catch((e) => log(`ingest ${code}: ${e.stack || e}`));
+    ingestChain = job;
+    return job;
+  }
+
+  async function runIngest(code, { force }) {
+    let room = store.loadRoom(code);
+    if (!room || room.status === "abandoned" || room.status === "open") return { skipped: "not closed" };
+    if (!force && room.ingest?.status === "done") return { skipped: "already done" };
+    if (!adapter) {
+      await mutateAndPublish(code, (r) => rooms.finishClosing(r, { status: "skipped", reason: "no summarizer configured" }));
+      closingRooms.delete(code);
+      return { skipped: "no summarizer" };
+    }
+    if (breaker.isOpen()) {
+      const until = breaker.state().until;
+      await mutateAndPublish(code, (r) => {
+        r.ingest = { ...(r.ingest || {}), status: "pending", last_error: `summarizer breaker open until ${until}`, updated_at: rooms.now() };
+      });
+      pendingIngests.add(code);
+      return { pending: "breaker open" };
+    }
+    ingestRunning = code;
+    await mutateAndPublish(code, (r) => {
+      r.ingest = { ...(r.ingest || { note_id: null }), status: "running", attempts: (r.ingest?.attempts || 0) + 1, last_error: null, updated_at: rooms.now() };
+    });
+    room = store.loadRoom(code);
+    try {
+      const { envelope, redactions } = buildEnvelope(room, kb);
+      const warnings = redactions ? [`${redactions} credential-looking string${redactions === 1 ? "" : "s"} redacted before summarizing; the raw transcript keeps them`] : [];
+      const { note, warnings: more } = await summarize(adapter, envelope, { log });
+      warnings.push(...more);
+      const meetingId = meetingIdFor(room);
+      const resummarize = kb.decisions().some((d) => d.meeting === meetingId); // a forced first ingest is still a first ingest
+      const result = kb.writeNote(room, note, { adapter: adapter.name, model: adapter.model, resummarize, warnings });
+      breaker.success();
+      const { room: after } = await mutateAndPublish(code, (r) => {
+        rooms.finishClosing(r, { status: "done", note_id: result.meetingId, last_error: null });
+        r.ingest = { ...r.ingest, status: "done", note_id: result.meetingId, last_error: null, updated_at: rooms.now() };
+        rooms.addSystemMessage(r, `Summary written: ${result.meetingId} with ${result.decisionIds.length} decision${result.decisionIds.length === 1 ? "" : "s"}${result.superseded.length ? `, superseding ${result.superseded.join(", ")}` : ""}.`, { action: "ingested", note_id: result.meetingId, decisions: result.decisionIds });
+      });
+      ledgerWrite(code, { status: "done", note_id: result.meetingId, adapter: adapter.name, model: adapter.model, decisions: result.decisionIds, attempts: room.ingest.attempts });
+      closingRooms.delete(code);
+      pendingIngests.delete(code);
+      events.notify(code, { type: "room", room: rooms.summarizeRoom(after) });
+      log(`ingest ${code}: note ${result.meetingId} written (${result.decisionIds.length} decisions)`);
+      return { done: result.meetingId };
+    } catch (error) {
+      const pause = breaker.failure({ rateLimited: error.status === 429 });
+      const message = String(error.message).slice(0, 500);
+      await mutateAndPublish(code, (r) => {
+        r.ingest = { ...(r.ingest || {}), status: "pending", last_error: message, updated_at: rooms.now() };
+        if (r.status === "closing") rooms.addSystemMessage(r, `The summary could not be written yet: ${message}. It will be retried.`, { action: "ingest_failed" });
+      });
+      ledgerWrite(code, { status: "pending", last_error: message, attempts: room.ingest.attempts });
+      pendingIngests.add(code);
+      log(`ingest ${code}: failed: ${message}${pause ? `; breaker open for ${Math.round(pause / 60000)} min` : ""}`);
+      return { pending: message };
+    } finally {
+      ingestRunning = null;
+    }
+  }
+
+  /** Called whenever a room leaves `open`; starts ingest for rooms that entered `closing`. */
+  function afterClose(code, room) {
+    if (room.status === "closing") {
+      closingRooms.add(code);
+      enqueueIngest(code);
+    }
+  }
 
   function afterMotion(code, motion, action, room) {
     events.notify(code, { type: "motion", action, motion: rooms.motionView(motion, null) });
@@ -177,6 +269,7 @@ export function createApp(config = loadConfig()) {
     if (!rooms.openMotions(room).length) motionRooms.delete(code);
     events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
     log(`motion #${motion.id} (${motion.type}) in ${code} ${motion.status} ${motion.outcome?.how}`);
+    if (room.status !== "open") afterClose(code, room);
     if (motion.status === "carried" && motion.type === "call_human") {
       notifier.humanNeeded(room, motion.reason, "human_called").catch(() => {});
     }
@@ -305,6 +398,7 @@ export function createApp(config = loadConfig()) {
       }
       if (!room) throw new HttpError(500, "could not allocate a room code");
       room.clock_config = { ...config.clocks };
+      room.ingest_enabled = Boolean(adapter);
       store.saveRoom(room);
       if (!isHumanCreator(room)) abandonCandidates.add(room.code);
       events.notify(room.code, { type: "room", room: rooms.summarizeRoom(room) });
@@ -459,9 +553,43 @@ export function createApp(config = loadConfig()) {
       if (changed) {
         motionRooms.delete(code);
         events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
-        log(`room ${code} closed by ${principal.name}`);
+        log(`room ${code} ${room.status} by ${principal.name}`);
+        afterClose(code, room);
       }
       return changed;
+    },
+
+    // ---- ingest and the knowledge store (DESIGN.md 10, 11) ----
+
+    /** Run or rerun ingest now. `action: "skip"` (human) closes without a note. */
+    async ingest(principal, code, body = {}) {
+      const room = loadOr404(code);
+      if (body.action === "skip") {
+        const { room: after } = await mutateAndPublish(code, (r) => {
+          const by = actingHuman(r, principal, body.name);
+          if (r.status !== "closing") throw new HttpError(409, `room ${code} is ${r.status}, not closing`);
+          rooms.finishClosing(r, { status: "skipped", reason: `closed without a note by ${by}` });
+          rooms.addSystemMessage(r, `${by} closed the room without waiting for a summary.`, { action: "ingest_skipped" });
+        });
+        closingRooms.delete(code);
+        pendingIngests.delete(code);
+        events.notify(code, { type: "room", room: rooms.summarizeRoom(after) });
+        return { ingest: after.ingest };
+      }
+      if (room.status === "open") throw new HttpError(409, `room ${code} is still open`);
+      if (room.status === "abandoned") throw new HttpError(409, `room ${code} was abandoned and is not summarized`);
+      if (!adapter) throw new HttpError(409, "no summarizer is configured");
+      const result = await enqueueIngest(code, { force: Boolean(body.force) });
+      return { result, ingest: store.loadRoom(code).ingest };
+    },
+
+    kb: {
+      index: () => kb.index(),
+      meetings: () => kb.listMeetings(),
+      meeting: (id) => kb.readMeeting(id),
+      decisions: ({ status, topic } = {}) => kb.decisions().filter((d) => (!status || d.status === status) && (!topic || d.topic === topic)),
+      topics: () => kb.topics(),
+      reindex: () => { kb.writeIndex(); return kb.index(); },
     },
 
     // ---- motions and human powers (DESIGN.md 6) ----
@@ -573,7 +701,44 @@ export function createApp(config = loadConfig()) {
           motionRooms.delete(code);
         }
       }
+      // Closing rooms past their maximum age close with the summary still pending.
+      const timedOut = [];
+      for (const code of [...closingRooms]) {
+        try {
+          const { result, room } = await mutateAndPublish(code, (room) => {
+            if (room.status !== "closing") return "drop";
+            if (ingestRunning === code) return "keep";
+            const grace = room.ingest_grace_until ? Date.parse(room.ingest_grace_until) : 0;
+            const deadline = Math.max(Date.parse(room.closed_at) + config.closingMaxSeconds * 1000, grace);
+            if (Date.now() < deadline) return "keep";
+            rooms.finishClosing(room, { status: room.ingest?.note_id ? "done" : "pending", last_error: room.ingest?.last_error || "closing timed out before a summary was written" });
+            rooms.addSystemMessage(room, "The room closed before its summary was written; the summary will be retried in the background.", { action: "closing_timed_out" });
+            return "timed_out";
+          });
+          if (result !== "keep") closingRooms.delete(code);
+          if (result === "timed_out") {
+            pendingIngests.add(code);
+            timedOut.push(code);
+            events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
+          }
+        } catch (error) {
+          log(`tick closing ${code}: ${error.message}`);
+          closingRooms.delete(code);
+        }
+      }
+      // Retry pending ingests once the retry interval has passed and the breaker allows.
+      if (adapter && !breaker.isOpen()) {
+        for (const code of [...pendingIngests]) {
+          const room = store.loadRoom(code);
+          if (!room || room.ingest?.status !== "pending") {
+            pendingIngests.delete(code);
+            continue;
+          }
+          if (Date.now() - Date.parse(room.ingest.updated_at) >= config.ingestRetrySeconds * 1000) enqueueIngest(code, { force: true });
+        }
+      }
       resolved.abandoned = abandoned;
+      resolved.timed_out = timedOut;
       return resolved;
     },
 
@@ -659,7 +824,16 @@ export function createApp(config = loadConfig()) {
       events: events.counts(),
       models: modelStatuses(),
       profiles: profileReport(),
-      scheduler: { rooms_with_motions: motionRooms.size, abandon_candidates: abandonCandidates.size, abandon_after_seconds: config.abandonAfterSeconds },
+      scheduler: { rooms_with_motions: motionRooms.size, abandon_candidates: abandonCandidates.size, abandon_after_seconds: config.abandonAfterSeconds, closing: closingRooms.size },
+      ingest: {
+        adapter: adapter ? { name: adapter.name, model: adapter.model } : null,
+        running: ingestRunning,
+        pending: pendingIngests.size,
+        breaker: breaker.state(),
+        kb_dir: config.kbDir,
+        closing_max_seconds: config.closingMaxSeconds,
+        ingest_retry_seconds: config.ingestRetrySeconds,
+      },
       notifiers: notifier.targets,
       clocks: { window_seconds: config.clocks.window_ms / 1000, hard_seconds: config.clocks.hard_ms / 1000 },
       mcp: { endpoint: `${config.publicOrigin}/mcp`, protocol_versions: mcp.tools ? ["2025-11-25", "2025-06-18", "2025-03-26"] : [] },
@@ -706,6 +880,24 @@ export function createApp(config = loadConfig()) {
     if (head === "events" && req.method === "GET") {
       requireAuth(req);
       return events.subscribe(null, res);
+    }
+
+    if (head === "kb") {
+      requireAuth(req);
+      if (req.method !== "GET") throw new HttpError(405, "method not allowed");
+      if (code === "index") {
+        res.writeHead(200, { "content-type": "text/markdown; charset=utf-8", "cache-control": "no-store" });
+        return res.end(service.kb.index());
+      }
+      if (code === "meetings" && !sub) return send(res, 200, { meetings: service.kb.meetings() });
+      if (code === "meetings" && sub) {
+        const m = service.kb.meeting(sub);
+        if (!m) throw new HttpError(404, `no meeting ${sub}`);
+        return send(res, 200, { meeting: m });
+      }
+      if (code === "decisions") return send(res, 200, { decisions: service.kb.decisions({ status: url.searchParams.get("status") || undefined, topic: url.searchParams.get("topic") || undefined }) });
+      if (code === "topics") return send(res, 200, { topics: service.kb.topics() });
+      throw new HttpError(404, "not found");
     }
 
     if (head !== "rooms") throw new HttpError(404, "not found");
@@ -764,6 +956,8 @@ export function createApp(config = loadConfig()) {
         return send(res, 200, await service.hold(principal, code, body));
       case "human":
         return send(res, 200, await service.human(principal, code, body));
+      case "ingest":
+        return send(res, 200, await service.ingest(principal, code, body));
       case "join": {
         const r = await service.join(principal, code, body);
         return send(res, 200, r);
@@ -822,6 +1016,7 @@ export function createApp(config = loadConfig()) {
       if (parts.length === 0) return serveStatic(res, "index.html");
       if (parts[0] === "login" && parts.length === 1) return serveStatic(res, "login.html");
       if (parts[0] === "rooms" && parts.length === 2 && isRoomCode(parts[1])) return serveStatic(res, "room.html");
+      if (parts[0] === "notes" && parts.length === 2 && /^M\d{8}-[A-Z0-9]{4}$/.test(parts[1])) return serveStatic(res, "note.html");
       if (parts[0] === "static" && parts.length === 2) return serveStatic(res, parts[1]);
       throw new HttpError(404, "not found");
     } catch (error) {
@@ -867,10 +1062,18 @@ export function createApp(config = loadConfig()) {
       for (const w of config.warnings || []) log(`warning: ${w}`);
       bootstrapToken();
       for (const room of store.listRooms()) {
+        if (room.status === "closing") {
+          closingRooms.add(room.code);
+          if (room.ingest?.status !== "done") enqueueIngest(room.code); // resume after a restart
+          continue;
+        }
+        if (room.status === "closed" && room.ingest?.status === "pending") pendingIngests.add(room.code);
         if (room.status !== "open") continue;
         if (rooms.openMotions(room).length) motionRooms.add(room.code);
         if (!isHumanCreator(room) && !room.others_joined && !room.human_present) abandonCandidates.add(room.code);
       }
+      if (adapter) log(`summarizer: ${adapter.name} (${adapter.model}); knowledge store at ${config.kbDir}`);
+      else log("no summarizer configured; rooms close without a summary (set config.summarizer to enable)");
       this.timer = setInterval(() => service.tick().catch((e) => log(`tick: ${e.message}`)), 5000);
       this.timer.unref();
       return new Promise((resolve, reject) => {
@@ -890,8 +1093,9 @@ export function createApp(config = loadConfig()) {
         });
       });
     },
-    stop() {
+    async stop() {
       clearInterval(this.timer);
+      await ingestChain.catch(() => {});
       for (const mp of models.values()) mp.stop();
       models.clear();
       for (const set of events.subscribers.values()) for (const res of set) res.end();

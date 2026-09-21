@@ -122,6 +122,8 @@ export function createRoom({ title, objective, creator, responseMode, code, cloc
     human_present: false,
     human_acknowledged_at: null,
     held: null,
+    ingest: null,
+    ingest_enabled: false, // the server sets this at creation when a summarizer is configured
     ingest_grace_until: null,
     clock_config: { ...DEFAULT_CLOCKS, ...(clocks || {}) },
     response_mode: mode,
@@ -154,6 +156,8 @@ export function upgradeRoom(room) {
   room.motions ??= [];
   room.next_motion_id ??= room.motions.length + 1;
   room.others_joined ??= Math.max(0, room.participants.filter((p) => !sameName(p.name, room.created_by?.name ?? "")).length);
+  room.ingest ??= room.status === "closed" ? { status: "skipped", attempts: 0, last_error: null, note_id: null, updated_at: room.closed_at, reason: "closed before ingest existed" } : null;
+  room.ingest_enabled ??= false;
   room.format = 2;
   return room;
 }
@@ -261,8 +265,13 @@ export function setResponseMode(room, mode, by, nowMs = Date.now()) {
   return true;
 }
 
-export function closeRoom(room, { by, kind, summary, how = "direct" }, nowMs = Date.now()) {
-  if (room.status === "closed") return false;
+/** A room with something to summarize passes through `closing` on its way to `closed`. */
+export function ingestEligible(room) {
+  return room.status !== "abandoned" && room.messages.some((m) => m.kind === "agent" || m.kind === "human" || m.kind === "model");
+}
+
+export function closeRoom(room, { by, kind, summary, how = "direct", closing = room.ingest_enabled === true }, nowMs = Date.now()) {
+  if (room.status === "closed" || room.status === "closing") return false;
   const stamp = iso(nowMs);
   for (const m of room.motions) {
     if (m.status === "open") {
@@ -271,11 +280,23 @@ export function closeRoom(room, { by, kind, summary, how = "direct" }, nowMs = D
       m.outcome = { how: "room_closed", by, reason: null, tally: tally(m) };
     }
   }
-  room.status = "closed";
+  const willIngest = closing && ingestEligible(room);
+  room.status = willIngest ? "closing" : "closed";
   room.closed_at = stamp;
   room.closed_by = { name: by, kind, how };
   room.summary = summary ? cleanText(summary, "summary", 10000, false) : null;
+  room.ingest = willIngest
+    ? { status: "queued", attempts: 0, last_error: null, note_id: null, updated_at: stamp }
+    : { status: "skipped", attempts: 0, last_error: null, note_id: null, updated_at: stamp, reason: closing ? "nothing to summarize" : "no summarizer configured" };
   pushMessage(room, { kind: "summary", sender: by, content: room.summary || `Room closed by ${by}.` }, nowMs);
+  return true;
+}
+
+/** Ingest finished, gave up, or was told to stop waiting: the room is closed. */
+export function finishClosing(room, ingest, nowMs = Date.now()) {
+  if (room.status !== "closing") return false;
+  room.status = "closed";
+  room.ingest = { ...room.ingest, ...ingest, updated_at: iso(nowMs) };
   return true;
 }
 
@@ -544,6 +565,7 @@ export function summarizeRoom(room) {
     human_present: room.human_present,
     human_acknowledged_at: room.human_acknowledged_at,
     held: room.held,
+    ingest: room.ingest ? { status: room.ingest.status, note_id: room.ingest.note_id, last_error: room.ingest.last_error } : null,
     response_mode: room.response_mode,
     participants: room.participants.map(({ name, kind, client, last_seen_at }) => ({ name, kind, client, last_seen_at })),
     message_count: room.messages.length,

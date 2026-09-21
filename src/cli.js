@@ -34,6 +34,12 @@ Motions (the CLI acts as the configured human unless --as NAME is given)
   hold CODE pause|resume
   human CODE acknowledge|dismiss
 
+Knowledge store
+  ingest CODE [--force]         write (or rewrite) the summary of a closed room
+  ingest CODE --skip            close a room without waiting for its summary
+  resummarize M-ID              rebuild a meeting's note from its transcript
+  kb meetings | decisions [TOPIC] | topics | note M-ID | index
+
 Administration
   token create NAME | list | revoke NAME
   config show                   effective configuration, secrets masked
@@ -289,6 +295,53 @@ class Cli {
     this.io.out(r.human_required ? "acknowledged; the room still counts you as needed" : "dismissed; the room may close without a human");
   }
 
+  // ---- ingest and the knowledge store ----
+
+  async ingest(code, flags) {
+    if (!code) throw new Error("usage: maindmeld ingest CODE [--force] | --skip");
+    const c = code.toUpperCase();
+    if (flags.skip) {
+      const name = await this.asHuman(c).catch(() => this.config.humanName);
+      const r = await this.api("POST", `/api/rooms/${c}/ingest`, { action: "skip", name });
+      this.io.out(`closed without a note: ${r.ingest.status}`);
+      return;
+    }
+    const r = await this.api("POST", `/api/rooms/${c}/ingest`, { force: Boolean(flags.force) });
+    const i = r.ingest || {};
+    this.io.out(`ingest ${c}: ${i.status}${i.note_id ? ` → ${i.note_id}` : ""}${i.last_error ? ` (${i.last_error})` : ""}`);
+  }
+
+  async resummarize(meetingId) {
+    if (!meetingId || !/^M\d{8}-/.test(meetingId)) throw new Error("usage: maindmeld resummarize M<YYYYMMDD>-<CODE>");
+    const code = `MM-${meetingId.split("-")[1]}`;
+    const r = await this.api("POST", `/api/rooms/${code}/ingest`, { force: true });
+    const i = r.ingest || {};
+    this.io.out(`resummarized ${meetingId}: ${i.status}${i.last_error ? ` (${i.last_error})` : ""}`);
+  }
+
+  async kb(what, arg) {
+    if (what === "meetings") {
+      const { meetings } = await this.api("GET", "/api/kb/meetings");
+      if (!meetings.length) return this.io.out("no meetings recorded");
+      for (const m of meetings) this.io.out(`${m.date}  ${m.id}  ${String((m.decisions || []).length).padStart(2)} decisions  ${m.title}`);
+    } else if (what === "decisions") {
+      const q = arg ? `?topic=${encodeURIComponent(arg)}&status=active` : "?status=active";
+      const { decisions } = await this.api("GET", `/api/kb/decisions${q}`);
+      if (!decisions.length) return this.io.out("no active decisions");
+      for (const d of decisions) this.io.out(`${d.id}  [${d.topic}]${d.provisional ? " (provisional)" : ""}  ${d.statement}`);
+    } else if (what === "topics") {
+      const { topics } = await this.api("GET", "/api/kb/topics");
+      if (!topics.length) return this.io.out("no topics yet");
+      for (const t of topics) this.io.out(`${t.name}${t.aliases?.length ? ` (${t.aliases.join(", ")})` : ""}  ${t.description || ""}`);
+    } else if (what === "note") {
+      const { meeting } = await this.api("GET", `/api/kb/meetings/${arg}`);
+      this.io.out(meeting.markdown);
+    } else if (what === "index") {
+      const res = await fetch(`${this.base}/api/kb/index`, { headers: { authorization: `Bearer ${this.cliToken({ create: true })}` } });
+      this.io.out(await res.text());
+    } else throw new Error("usage: maindmeld kb meetings | decisions [TOPIC] | topics | note M-ID | index");
+  }
+
   async token(action, name) {
     const auth = new Auth(new Store(this.config.dataDir));
     if (action === "create") {
@@ -334,6 +387,9 @@ export async function run(argv = process.argv.slice(2)) {
     wait: () => cli.wait(args[0], flags),
     hold: () => cli.hold(args[0], args[1]),
     human: () => cli.human(args[0], args[1]),
+    ingest: () => cli.ingest(args[0], flags),
+    resummarize: () => cli.resummarize(args[0]),
+    kb: () => cli.kb(args[0], args[1]),
     token: () => cli.token(args[0], args[1]),
     config: () => (args[0] === "show" ? cli.configShow() : Promise.reject(new Error("usage: maindmeld config show"))),
   };
