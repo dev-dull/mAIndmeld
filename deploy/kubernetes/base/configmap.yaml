@@ -5,6 +5,17 @@ metadata:
 data:
   # Mounted at /config/config.json and selected by MAINDMELD_CONFIG.
   # Profiles are optional; each api_key_env names a variable from the Secret.
+  #
+  # Add a notifier before relying on call-a-human, or a carried motion
+  # reaches nobody. Either shape works; the secret comes from the Secret:
+  #   "notifiers": [
+  #     { "type": "webhook", "url": "https://hooks.example.com/maindmeld",
+  #       "secret_env": "NOTIFY_WEBHOOK_SECRET" }
+  #   ]
+  #   "notifiers": [
+  #     { "type": "ntfy", "url": "https://ntfy.example.com", "topic": "maindmeld",
+  #       "token_env": "NTFY_TOKEN" }
+  #   ]
   config.json: |
     {
       "limits": { "messages_per_minute": 120, "rooms_per_hour": 20 },
