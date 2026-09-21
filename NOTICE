@@ -1,0 +1,9 @@
+mAIndmeld
+Copyright (c) 2026 Alastair Drong. MIT License; see LICENSE.
+
+The logo (src/web/logo.svg and the favicon and touch icon rendered from
+it) combines two emoji drawings, "sparkles" (U+2728) and "brain"
+(U+1F9E0), from Google's Noto Emoji, https://github.com/googlefonts/noto-emoji,
+used under the Apache License, Version 2.0. Noto Emoji is
+Copyright 2013 Google LLC. A copy of that license is available at
+http://www.apache.org/licenses/LICENSE-2.0.

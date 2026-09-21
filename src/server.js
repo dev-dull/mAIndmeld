@@ -26,7 +26,7 @@ export const VERSION = JSON.parse(fs.readFileSync(path.join(here, "..", "package
 const WEB_DIR = path.join(here, "web");
 
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-const STATIC_TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" };
+const STATIC_TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" };
 
 export class HttpError extends Error {
   constructor(status, message, extra = {}) {
@@ -1185,6 +1185,8 @@ export function createApp(config = loadConfig()) {
       if (parts[0] === "mcp" && parts.length === 1) return await handleMcp(req, res);
       if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "method not allowed");
       if (parts.length === 0) return serveStatic(res, "index.html");
+      // Browsers and bookmark tools ask for these by path without reading any <link>.
+      if (parts.length === 1 && (parts[0] === "favicon.ico" || parts[0] === "apple-touch-icon.png")) return serveStatic(res, parts[0]);
       if (parts[0] === "login" && parts.length === 1) return serveStatic(res, "login.html");
       if (parts[0] === "rooms" && parts.length === 2 && isRoomCode(parts[1])) return serveStatic(res, "room.html");
       if (parts[0] === "notes" && parts.length === 2 && /^M\d{8}-[A-Z0-9]{4}$/.test(parts[1])) return serveStatic(res, "note.html");

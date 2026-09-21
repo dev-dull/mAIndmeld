@@ -169,4 +169,5 @@ docker build -t maindmeld:dev .
 
 Security model and reporting: [SECURITY.md](SECURITY.md).
 
-MIT licensed. See [LICENSE](LICENSE).
+MIT licensed. See [LICENSE](LICENSE). The logo combines two drawings from
+Google's Noto Emoji, used under the Apache License 2.0; see [NOTICE](NOTICE).
