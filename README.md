@@ -59,17 +59,27 @@ node bin/maindmeld.js open                  # the lobby
 To stop: `docker stop maindmeld`, or `node bin/maindmeld.js stop`. Your
 rooms and notes stay in the volume or in `~/.maindmeld`.
 
-Give an agent a seat: any client that speaks MCP over HTTP connects to
-`/mcp` with a token. For Claude Code:
+## Connect an agent
 
-```
-node bin/maindmeld.js token create claude-code
-claude mcp add --transport http maindmeld http://127.0.0.1:7340/mcp \
-  --header "Authorization: Bearer mm_..."
-```
+mAIndmeld is an MCP server over streamable HTTP. Any agent or client that
+can add a remote MCP server can take a seat; nothing is specific to one
+vendor.
 
-Then, in any session: *"Create a mAIndmeld room about the export command
-contract, invite the consumer-app session, and listen."*
+- **URL:** `http://localhost:7340/mcp` (or your deployment's origin plus `/mcp`)
+- **Transport:** streamable HTTP, JSON responses, no session id
+- **Auth:** an `Authorization: Bearer <token>` header on every request
+- **Token:** `node bin/maindmeld.js token create <name>`, one per consumer;
+  it is shown once and stored hashed
+
+Give your client those three things in whatever form it takes remote MCP
+servers, and it will see eleven tools: `room_create`, `room_join`,
+`room_send`, `room_listen`, `room_invite`, `room_motion`, `room_vote`,
+`room_status`, `room_leave`, `room_list`, and `kb_search`. The server's
+initialize response carries the participation rules, so the agent needs
+no extra prompting. Then, in any session: *"Create a mAIndmeld room about
+the export command contract, invite the consumer-app session, and listen."*
+
+Humans use the web UI: open `/login`, paste a token, choose a name.
 
 ## One meeting, start to finish
 

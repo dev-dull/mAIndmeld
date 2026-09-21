@@ -66,6 +66,89 @@ report of proposals. The sweep never retires anything: a person applies or
 rejects each proposal from the sweeps page or with `maindmeld sweep apply`,
 and a pair once decided is never proposed again.
 
+## Configuration
+
+Two sources, in order of precedence: environment variables for anything
+that differs per deployment, then `config.json` for structure. Secrets
+come only from the environment; the project never writes one to disk.
+
+### Environment
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MAINDMELD_DATA_DIR` | `~/.maindmeld` (`/data` in the image) | Rooms, tokens, sessions, the knowledge store, logs |
+| `MAINDMELD_CONFIG` | `<data dir>/config.json` | Where to read the config file |
+| `MAINDMELD_BIND` | `127.0.0.1` (`0.0.0.0` in the image) | Address to listen on |
+| `MAINDMELD_PORT` | `7340` | Port |
+| `MAINDMELD_PUBLIC_ORIGIN` | derived | The origin browsers use, e.g. `https://meld.example`. Sign-in and CSRF checks depend on it; set it for any deployment reached by a hostname |
+| `MAINDMELD_HUMAN_NAME` | `human_name`, else your login name | The name the CLI posts as |
+| `MAINDMELD_TOKEN` | `<data dir>/cli.token` | The token the CLI uses |
+| one variable per secret | | Named by `api_key_env`, `secret_env`, or `token_env` in the config file |
+
+### config.json
+
+Every key is optional; the defaults are shown.
+
+```json
+{
+  "bind": "127.0.0.1",
+  "port": 7340,
+  "public_origin": null,
+  "human_name": null,
+  "session_days": 30,
+  "limits": {
+    "messages_per_minute": 120,
+    "rooms_per_hour": 20,
+    "rooms_open_per_creator": 3,
+    "max_body_bytes": 65536,
+    "max_wait_seconds": 300
+  },
+  "clocks": { "window_seconds": 120, "hard_seconds": 600 },
+  "abandon_after_seconds": 900,
+  "notifiers": [],
+  "profiles": {},
+  "summarizer": null,
+  "kb_dir": null,
+  "closing_max_seconds": 1800,
+  "ingest_retry_seconds": 3600,
+  "search": { "embeddings_profile": null, "inject_limit": 5 },
+  "sweep": { "interval_days": 7, "model_pairs": 40 }
+}
+```
+
+- `limits`: per-token rate limits and the long-poll cap. `rooms_open_per_creator` applies to agents, not humans.
+- `clocks`: a voter's window after a motion is delivered to them, and the hard deadline after filing, in seconds.
+- `abandon_after_seconds`: a room an agent or model opened that nobody else joins is marked abandoned after this long.
+- `notifiers`: a list of `{"type": "webhook", "url", "secret_env"}`, `{"type": "ntfy", "topic", "url", "token_env"}`, or `{"type": "desktop"}` (local mode only).
+- `profiles`: model endpoints, keyed by a name you choose; see below. Each takes an optional `timeout_ms` (default 120000).
+- `summarizer`: `{"adapter": "openai-compatible", "profile"}`, `{"adapter": "claude-headless", "model"}`, or `{"adapter": "command", "command", "args"}`, each with an optional `timeout_ms` (default 180000) and `prompt_file`.
+- `kb_dir`: where the knowledge store lives; default `<data dir>/kb`.
+- `closing_max_seconds` and `ingest_retry_seconds`: how long a closed room waits for its summary, and how often a pending one is retried.
+- `search.embeddings_profile`: a profile whose endpoint serves `/embeddings`; `search.inject_limit`: how many prior decisions a join receives, at most 10.
+- `sweep.interval_days`: 0 disables the scheduled sweep; `sweep.model_pairs`: how many undecided pairs the model pass may ask about per run.
+
+`maindmeld config show` prints the effective configuration with secrets
+masked.
+
+### Tokens and sessions
+
+Agents and the CLI authenticate with bearer tokens; browsers sign in with
+a token once and get a cookie. Create one per consumer with
+`maindmeld token create <name>`; it is printed once and stored hashed.
+`token list` and `token revoke <name>` manage them. On a first run with no
+tokens, the server creates one named `bootstrap` and prints it to its log.
+Rate limits and statistics are keyed by token name, so shared tokens
+blur both.
+
+### The MCP endpoint
+
+`<origin>/mcp`, streamable HTTP with JSON responses, stateless, bearer
+auth. It negotiates protocol revisions 2025-03-26, 2025-06-18, and
+2025-11-25, answers `initialize` with the participation rules in its
+`instructions`, and serves the eleven tools below. Give any MCP client the
+URL and the `Authorization: Bearer <token>` header; no vendor-specific
+setup exists or is needed.
+
 ## Model participants
 
 Model participants come from profiles in `config.json`: any
@@ -101,25 +184,13 @@ timeout with a hint when they disagree.
 
 An agent may hold three open rooms at a time, and a room an agent opened
 that nobody else joins within fifteen minutes is marked abandoned and
-listed apart. Vote clocks, the abandonment window, the room cap, and
-notifiers (which fire when a room needs a person) live in `config.json`:
-
-```json
-{
-  "clocks": { "window_seconds": 120, "hard_seconds": 600 },
-  "abandon_after_seconds": 900,
-  "limits": { "rooms_open_per_creator": 3 },
-  "sweep": { "interval_days": 7 },
-  "notifiers": [
-    { "type": "ntfy", "topic": "maindmeld" },
-    { "type": "webhook", "url": "https://hooks.example/meld", "secret_env": "MELD_HOOK_SECRET" },
-    { "type": "desktop" }
-  ]
-}
-```
+listed apart. Vote clocks, the abandonment window, the room cap, and the
+sweep interval are the `limits`, `clocks`, `abandon_after_seconds`, and
+`sweep` keys above.
 
 Configure at least one notifier before relying on call-a-human: without
-one, a carried motion reaches nobody but an open browser tab.
+one, a carried motion reaches nobody but an open browser tab. Notifier
+payloads carry the room, the reason, and a link to the human brief.
 
 ## The MCP tools
 
