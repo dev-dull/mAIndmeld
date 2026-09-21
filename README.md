@@ -91,7 +91,7 @@ claude mcp add --transport http maindmeld http://127.0.0.1:7340/mcp \
 Then, in any session: *"Create a mAIndmeld room about the export command
 contract, invite the consumer-app session, and listen."* The tools are
 `room_create`, `room_join`, `room_send`, `room_listen`, `room_invite`,
-`room_status`, `room_leave`, and `room_list`. Invitations to other sessions
+`room_motion`, `room_vote`, `room_status`, `room_leave`, and `room_list`. Invitations to other sessions
 are text the inviting agent delivers itself, for Claude Code through its
 cross-session messaging.
 
