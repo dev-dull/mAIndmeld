@@ -43,6 +43,8 @@ test("search endpoint and join-time injection, capped", async () => {
     assert.ok(joined.data.prior_decisions.some((d) => d.id === "D-3"));
     const quiet = await s.req("POST", "/api/rooms", { body: { title: "Lunch", objective: "Where to eat", name: "a" } });
     assert.deepEqual(quiet.data.prior_decisions, [], "no injection when nothing matches");
+    const focused = await s.req("POST", "/api/rooms", { body: { title: "Retries", objective: "How many attempts with exponential backoff", name: "a" } });
+    assert.ok(focused.data.prior_decisions.every((d) => d.topic === "retry-policy"), "weak matches from other topics are dropped, not padded in");
     assert.equal((await s.req("GET", "/api/health")).data.search.inject_limit, 3);
   } finally {
     await s.close();

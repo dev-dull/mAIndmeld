@@ -230,7 +230,9 @@ export function createApp(config = loadConfig()) {
   async function priorDecisions(room) {
     try {
       const results = await searchDecisions(`${room.title} ${room.objective}`, { k: config.search.injectLimit });
-      return results.map(({ id, topic, statement, date }) => ({ id, topic, statement, date }));
+      // Keyword scores tail off into noise; keep only results near the best one.
+      const top = results[0]?.score || 0;
+      return results.filter((r) => r.score >= top * 0.3).map(({ id, topic, statement, date }) => ({ id, topic, statement, date }));
     } catch (error) {
       log(`prior decisions for ${room.code}: ${error.message}`);
       return [];
