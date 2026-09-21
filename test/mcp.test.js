@@ -46,7 +46,8 @@ test("initialize negotiates a protocol version and advertises tools", async () =
 
   const list = await rpc("tools/list");
   const names = list.data.result.tools.map((t) => t.name);
-  assert.deepEqual(names, ["room_create", "room_join", "room_send", "room_listen", "room_invite", "room_motion", "room_vote", "room_status", "room_leave", "room_list"]);
+  assert.deepEqual(names, ["room_create", "room_join", "room_send", "room_listen", "room_invite", "room_motion", "room_vote", "room_status", "room_leave", "room_list", "kb_search"]);
+  assert.match(data.result.instructions, /pre-flight check/);
   for (const t of list.data.result.tools) assert.equal(t.inputSchema.type, "object");
 
   const ping = await rpc("ping");

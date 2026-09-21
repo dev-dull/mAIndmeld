@@ -18,6 +18,8 @@ import { createMcp } from "./mcp.js";
 import { createNotifier } from "./notify.js";
 import { KnowledgeStore, meetingIdFor } from "./kb.js";
 import { buildEnvelope, createAdapter, summarize, Breaker } from "./summarize.js";
+import { search as kbSearch, EmbeddingClient, EmbeddingStore, embeddingText } from "./search.js";
+import { runSweep, decideProposal, SweepStore } from "./sweep.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const VERSION = JSON.parse(fs.readFileSync(path.join(here, "..", "package.json"), "utf8")).version;
@@ -176,9 +178,68 @@ export function createApp(config = loadConfig()) {
   const kb = new KnowledgeStore(config.kbDir);
   const adapter = createAdapter(config); // null when no summarizer is configured
   const breaker = new Breaker();
+
+  // ---- retrieval (DESIGN.md 13) ----
+
+  const embedder = config.search.embeddingsProfile ? new EmbeddingClient(config.profiles[config.search.embeddingsProfile]) : null;
+  const embeddingStore = new EmbeddingStore(config.kbDir);
+  const searchCache = { key: null, indexes: new Map() };
+  const indexCache = {
+    stamp: () => {
+      try {
+        return fs.statSync(kb.decisionsFile).mtimeMs;
+      } catch {
+        return 0;
+      }
+    },
+    get(inactive, topic) {
+      const stamp = this.stamp();
+      if (searchCache.key !== stamp) {
+        searchCache.key = stamp;
+        searchCache.indexes.clear();
+      }
+      return searchCache.indexes.get(`${inactive}|${topic || ""}`) || null;
+    },
+    set(inactive, topic, index) {
+      searchCache.indexes.set(`${inactive}|${topic || ""}`, index);
+    },
+  };
+
+  async function searchDecisions(query, opts = {}) {
+    return kbSearch(kb, query, { ...opts, embedder, embeddings: embedder ? embeddingStore.read() : null, cache: indexCache });
+  }
+
+  /** Best effort: embed decisions that lack a vector. Never throws. */
+  async function embedMissing(ids = null) {
+    if (!embedder) return 0;
+    try {
+      const have = embeddingStore.read();
+      const current = (d) => have.get(d.id)?.model === embedder.model;
+      const todo = kb.decisions().filter((d) => !current(d) && (!ids || ids.includes(d.id)));
+      if (!todo.length) return 0;
+      const vectors = await embedder.embed(todo.map(embeddingText));
+      embeddingStore.append(todo.map((d, i) => ({ id: d.id, model: embedder.model, vector: vectors[i], created_at: new Date().toISOString() })));
+      return todo.length;
+    } catch (error) {
+      log(`embeddings: ${error.message}`);
+      return 0;
+    }
+  }
+
+  /** The few decisions an arriving participant should know about. Hard-capped. */
+  async function priorDecisions(room) {
+    try {
+      const results = await searchDecisions(`${room.title} ${room.objective}`, { k: config.search.injectLimit });
+      return results.map(({ id, topic, statement, date }) => ({ id, topic, statement, date }));
+    } catch (error) {
+      log(`prior decisions for ${room.code}: ${error.message}`);
+      return [];
+    }
+  }
   const ledgerFile = store.filePath("ingested.json");
   let ingestChain = Promise.resolve();
   let ingestRunning = null;
+  let sweepRunning = false;
 
   function ledgerWrite(code, entry) {
     const ledger = store.readJSON(ledgerFile, { format: 1, rooms: {} });
@@ -232,6 +293,7 @@ export function createApp(config = loadConfig()) {
       ledgerWrite(code, { status: "done", note_id: result.meetingId, adapter: adapter.name, model: adapter.model, decisions: result.decisionIds, attempts: room.ingest.attempts });
       closingRooms.delete(code);
       pendingIngests.delete(code);
+      embedMissing(result.decisionIds).then((n) => n && log(`embeddings: ${n} vector${n === 1 ? "" : "s"} written for ${result.meetingId}`));
       events.notify(code, { type: "room", room: rooms.summarizeRoom(after) });
       log(`ingest ${code}: note ${result.meetingId} written (${result.decisionIds.length} decisions)`);
       return { done: result.meetingId };
@@ -418,7 +480,7 @@ export function createApp(config = loadConfig()) {
         invites.push({ kind: "human", ok: true });
       }
       const fresh = invites.length ? store.loadRoom(room.code) : room;
-      return { room: fresh, invitation: invitationText(fresh, config.publicOrigin), invites };
+      return { room: fresh, invitation: invitationText(fresh, config.publicOrigin), invites, prior_decisions: await priorDecisions(fresh) };
     },
 
     async get(code) {
@@ -448,7 +510,42 @@ export function createApp(config = loadConfig()) {
         events.notify(code, { type: "participant", action: "joined", participant: result.participant });
         if (result.room.others_joined > 0) abandonCandidates.delete(code);
       }
-      return { ...result, invitation: invitationText(result.room, config.publicOrigin) };
+      return { ...result, invitation: invitationText(result.room, config.publicOrigin), prior_decisions: await priorDecisions(result.room) };
+    },
+
+    /** What a called person needs to know, without the transcript. DESIGN.md 13. */
+    async brief(code) {
+      const room = loadOr404(code);
+      const calls = room.messages.filter((m) => m.data?.action === "human_called");
+      const lastCall = calls.at(-1) || null;
+      const carried = room.motions.filter((m) => m.type === "call_human" && m.status === "carried").at(-1) || null;
+      const open = rooms.openMotions(room).map((m) => rooms.motionView(m, null));
+      const provisional = room.messages.filter((m) => m.provisional).length;
+      const blockedClose = room.human_required && !room.human_present;
+      let needed;
+      if (room.status !== "open") needed = `The room is ${room.status}; nothing is needed.`;
+      else if (!room.human_required) needed = "No human has been called. Join if you want to take part.";
+      else if (blockedClose) needed = "Join the room, then acknowledge the call (carry on with you present) or dismiss it (the agents may finish alone). Close is blocked until you do.";
+      else if (open.length) needed = `You are present. ${open.length} motion${open.length === 1 ? " is" : "s are"} open; you may let the vote run, carry or cancel it, or give a slow voter more time.`;
+      else needed = "You are present and acknowledged; the agents can continue. Dismiss the call if they no longer need you.";
+      return {
+        code: room.code,
+        title: room.title,
+        objective: room.objective,
+        status: room.status,
+        called: lastCall
+          ? { at: lastCall.created_at, reason: lastCall.data?.reason || carried?.reason || null, by: carried?.proposer || null, how: carried ? "motion" : "invite", tally: carried?.outcome?.tally || null }
+          : null,
+        needed,
+        human_required: room.human_required,
+        human_present: room.human_present,
+        acknowledged_at: room.human_acknowledged_at,
+        provisional_messages: provisional,
+        open_motions: open,
+        participants: room.participants.map(({ name, kind }) => ({ name, kind })),
+        recent: room.messages.filter((m) => m.kind !== "system" && m.kind !== "summary").slice(-6).map(({ id, kind, sender, content, created_at, provisional: p }) => ({ id, kind, sender, content: content.slice(0, 600), created_at, provisional: p || undefined })),
+        url: `${config.publicOrigin}/rooms/${room.code}`,
+      };
     },
 
     async leave(principal, code, body) {
@@ -589,7 +686,39 @@ export function createApp(config = loadConfig()) {
       meeting: (id) => kb.readMeeting(id),
       decisions: ({ status, topic } = {}) => kb.decisions().filter((d) => (!status || d.status === status) && (!topic || d.topic === topic)),
       topics: () => kb.topics(),
-      reindex: () => { kb.writeIndex(); return kb.index(); },
+      reindex: async () => { kb.writeIndex(); await embedMissing(); return kb.index(); },
+      search: (query, opts) => searchDecisions(query, opts),
+      embeddings: () => ({ enabled: Boolean(embedder), model: embedder?.model || null, vectors: embedder ? embeddingStore.read().size : 0 }),
+    },
+
+    // ---- the sweep (DESIGN.md 12): proposes, never retires ----
+
+    sweep: {
+      state: () => new SweepStore(kb).state(),
+      list: () => new SweepStore(kb).list().map(({ id, ran_at, all, topics_checked, proposals }) => ({ id, ran_at, all, topics: topics_checked.length, proposals: proposals.length, undecided: proposals.filter((p) => !p.decision).length })),
+      read: (id) => new SweepStore(kb).read(id),
+      async run({ all = false } = {}) {
+        if (sweepRunning) throw new HttpError(409, "a sweep is already running");
+        sweepRunning = true;
+        try {
+          const report = await runSweep(kb, adapter, { all, maxModelPairs: config.sweep.modelPairs, log });
+          log(`sweep ${report.id}: ${report.proposals.length} proposal${report.proposals.length === 1 ? "" : "s"} over ${report.topics_checked.length} topics`);
+          return report;
+        } finally {
+          sweepRunning = false;
+        }
+      },
+      decide(principal, id, n, body) {
+        // Human only: a session, or a token whose name is not a room participant
+        // is not enough to tell, so tokens must say who they act for.
+        const by = principal.kind === "session" ? principal.name : body.name;
+        if (!by) throw new HttpError(403, "applying or rejecting a proposal is a human power; pass your name");
+        try {
+          return decideProposal(kb, id, Number(n), { action: body.action, by });
+        } catch (error) {
+          throw new HttpError(error.status || 400, error.message);
+        }
+      },
     },
 
     // ---- motions and human powers (DESIGN.md 6) ----
@@ -737,6 +866,19 @@ export function createApp(config = loadConfig()) {
           if (Date.now() - Date.parse(room.ingest.updated_at) >= config.ingestRetrySeconds * 1000) enqueueIngest(code, { force: true });
         }
       }
+      // The weekly sweep, when due and when there is anything to sweep.
+      resolved.sweep = null;
+      if (config.sweep.intervalDays > 0 && !sweepRunning && !ingestRunning) {
+        const last = service.sweep.state().last_sweep_at;
+        const due = !last || Date.now() - Date.parse(last) >= config.sweep.intervalDays * 86_400_000;
+        if (due && kb.decisions().length) {
+          try {
+            resolved.sweep = (await service.sweep.run()).id;
+          } catch (error) {
+            log(`scheduled sweep: ${error.message}`);
+          }
+        }
+      }
       resolved.abandoned = abandoned;
       resolved.timed_out = timedOut;
       return resolved;
@@ -834,6 +976,8 @@ export function createApp(config = loadConfig()) {
         closing_max_seconds: config.closingMaxSeconds,
         ingest_retry_seconds: config.ingestRetrySeconds,
       },
+      search: { ...service.kb.embeddings(), inject_limit: config.search.injectLimit },
+      sweep: { ...service.sweep.state(), interval_days: config.sweep.intervalDays, running: sweepRunning, undecided: service.sweep.list().reduce((s, x) => s + x.undecided, 0) },
       notifiers: notifier.targets,
       clocks: { window_seconds: config.clocks.window_ms / 1000, hard_seconds: config.clocks.hard_ms / 1000 },
       mcp: { endpoint: `${config.publicOrigin}/mcp`, protocol_versions: mcp.tools ? ["2025-11-25", "2025-06-18", "2025-03-26"] : [] },
@@ -883,7 +1027,25 @@ export function createApp(config = loadConfig()) {
     }
 
     if (head === "kb") {
-      requireAuth(req);
+      const principal = requireAuth(req);
+      checkOrigin(req, principal);
+      if (code === "sweeps") {
+        if (req.method === "GET" && !sub) return send(res, 200, { sweeps: service.sweep.list(), state: service.sweep.state() });
+        if (req.method === "GET" && sub) {
+          const r = service.sweep.read(sub);
+          if (!r) throw new HttpError(404, `no sweep ${sub}`);
+          return send(res, 200, { sweep: r });
+        }
+        if (req.method === "POST" && sub === "run") {
+          const body = await readBody(req);
+          return send(res, 201, { sweep: await service.sweep.run({ all: Boolean(body.all) }) });
+        }
+        if (req.method === "POST" && sub && id === "proposals" && verb) {
+          const body = await readBody(req);
+          return send(res, 200, { proposal: service.sweep.decide(principal, sub, verb, body) });
+        }
+        throw new HttpError(404, "not found");
+      }
       if (req.method !== "GET") throw new HttpError(405, "method not allowed");
       if (code === "index") {
         res.writeHead(200, { "content-type": "text/markdown; charset=utf-8", "cache-control": "no-store" });
@@ -897,6 +1059,12 @@ export function createApp(config = loadConfig()) {
       }
       if (code === "decisions") return send(res, 200, { decisions: service.kb.decisions({ status: url.searchParams.get("status") || undefined, topic: url.searchParams.get("topic") || undefined }) });
       if (code === "topics") return send(res, 200, { topics: service.kb.topics() });
+      if (code === "search") {
+        const q = url.searchParams.get("q") || "";
+        if (!q.trim()) throw new HttpError(400, "q is required");
+        const results = await service.kb.search(q, { k: Number(url.searchParams.get("k")) || 5, topic: url.searchParams.get("topic") || undefined, includeInactive: url.searchParams.get("all") === "1" });
+        return send(res, 200, { query: q, results, embeddings: service.kb.embeddings() });
+      }
       throw new HttpError(404, "not found");
     }
 
@@ -936,6 +1104,7 @@ export function createApp(config = loadConfig()) {
     }
 
     if (sub === "motions" && req.method === "GET") return send(res, 200, await service.motions(code));
+    if (sub === "brief" && req.method === "GET") return send(res, 200, await service.brief(code));
 
     if (req.method !== "POST") throw new HttpError(405, "method not allowed");
     const body = await readBody(req);
@@ -1017,6 +1186,7 @@ export function createApp(config = loadConfig()) {
       if (parts[0] === "login" && parts.length === 1) return serveStatic(res, "login.html");
       if (parts[0] === "rooms" && parts.length === 2 && isRoomCode(parts[1])) return serveStatic(res, "room.html");
       if (parts[0] === "notes" && parts.length === 2 && /^M\d{8}-[A-Z0-9]{4}$/.test(parts[1])) return serveStatic(res, "note.html");
+      if (parts[0] === "sweeps" && parts.length === 1) return serveStatic(res, "sweeps.html");
       if (parts[0] === "static" && parts.length === 2) return serveStatic(res, parts[1]);
       throw new HttpError(404, "not found");
     } catch (error) {

@@ -127,6 +127,17 @@ export function loadConfig(overrides = {}, env = process.env) {
     };
   }
   const kbDir = path.resolve(file.kb_dir ? String(file.kb_dir) : path.join(dataDir, "kb"));
+  const searchFile = file.search && typeof file.search === "object" ? file.search : {};
+  const search = {
+    embeddingsProfile: searchFile.embeddings_profile ? String(searchFile.embeddings_profile) : null,
+    injectLimit: Math.min(10, intFrom(searchFile.inject_limit, 5, "search.inject_limit")),
+  };
+  if (search.embeddingsProfile && !profiles[search.embeddingsProfile]) throw new Error(`search.embeddings_profile ${search.embeddingsProfile} is not a configured profile`);
+  const sweepFile = file.sweep && typeof file.sweep === "object" ? file.sweep : {};
+  const sweep = {
+    intervalDays: intFrom(sweepFile.interval_days, 7, "sweep.interval_days"),
+    modelPairs: intFrom(sweepFile.model_pairs, 40, "sweep.model_pairs"),
+  };
   const closingMaxSeconds = intFrom(file.closing_max_seconds, 1800, "closing_max_seconds");
   const ingestRetrySeconds = intFrom(file.ingest_retry_seconds, 3600, "ingest_retry_seconds");
 
@@ -159,6 +170,8 @@ export function loadConfig(overrides = {}, env = process.env) {
     kbDir,
     closingMaxSeconds,
     ingestRetrySeconds,
+    search,
+    sweep,
     publicOrigin: configuredOrigin ? configuredOrigin.replace(/\/$/, "") : `http://${isLoopback(bind) ? "127.0.0.1" : "localhost"}:${port}`,
     allowedOrigins: origins,
     warnings,
@@ -183,6 +196,8 @@ export function describeConfig(config) {
     clocks: { window_seconds: config.clocks.window_ms / 1000, hard_seconds: config.clocks.hard_ms / 1000 },
     abandon_after_seconds: config.abandonAfterSeconds,
     kb_dir: config.kbDir,
+    search: { embeddings_profile: config.search.embeddingsProfile, inject_limit: config.search.injectLimit },
+    sweep: { interval_days: config.sweep.intervalDays, model_pairs: config.sweep.modelPairs },
     closing_max_seconds: config.closingMaxSeconds,
     ingest_retry_seconds: config.ingestRetrySeconds,
     summarizer: config.summarizer ? { adapter: config.summarizer.adapter, profile: config.summarizer.profile, command: config.summarizer.command, model: config.summarizer.model, timeout_ms: config.summarizer.timeoutMs, prompt_overridden: Boolean(config.summarizer.prompt) } : null,

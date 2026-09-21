@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sweeps · mAIndmeld</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-page="sweeps">
+  <header class="top">
+    <div><a class="brand" href="/">mAIndmeld</a> &nbsp;·&nbsp; Sweeps</div>
+    <span class="who" id="who"></span>
+  </header>
+  <main>
+    <p class="note-meta" id="sweep-state"></p>
+    <div class="actions" style="flex-direction: row; gap: 0.5rem; margin-bottom: 1rem;">
+      <button id="run-sweep">Run a sweep now</button>
+      <button id="run-sweep-all">Sweep every topic</button>
+    </div>
+    <div id="sweeps"><div class="empty">Loading…</div></div>
+  </main>
+  <div class="toast" id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

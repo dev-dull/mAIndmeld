@@ -90,7 +90,12 @@ export function buildEnvelope(room, kb, { maxDecisions = 40 } = {}) {
 
 // ---- validation ----
 
-export function validateNote(note, envelope) {
+/**
+ * Validate a note against the schema. Returns the error list; promotions of
+ * undeclared decision topics are applied to the note and reported through
+ * the optional `warnings` array instead of failing.
+ */
+export function validateNote(note, envelope, warnings = []) {
   const errors = [];
   if (!note || typeof note !== "object" || Array.isArray(note)) return ["note must be a JSON object"];
   const str = (k, max) => {
@@ -108,12 +113,27 @@ export function validateNote(note, envelope) {
   }
   const allowed = (t) => vocab.has(topicSlug(t)) || declared.has(topicSlug(t));
   if (!Array.isArray(note.topics)) errors.push("topics must be an array");
-  else for (const t of note.topics) if (typeof t !== "string" || !allowed(t)) errors.push(`topic "${t}" is not in the vocabulary and not declared in new_topics`);
+  else {
+    // Check decisions first so a topic promoted there also covers the note's list.
+    const laterDeclared = (Array.isArray(note.decisions) ? note.decisions : []).map((d) => d && typeof d.topic === "string" ? topicSlug(d.topic) : "").filter(Boolean);
+    for (const t of note.topics) {
+      if (typeof t !== "string") errors.push(`topics must contain strings, not ${typeof t}`);
+      else if (!allowed(t) && !laterDeclared.includes(topicSlug(t))) errors.push(`topic "${t}" is not in the vocabulary and not declared in new_topics`);
+    }
+  }
   const knownIds = new Set((envelope.context?.active_decisions || []).map((d) => d.id));
   if (!Array.isArray(note.decisions)) errors.push("decisions must be an array");
   else note.decisions.forEach((d, i) => {
     if (!d || typeof d !== "object") return errors.push(`decision ${i} must be an object`);
-    if (typeof d.topic !== "string" || !allowed(d.topic)) errors.push(`decision ${i}: topic "${d.topic}" is not in the vocabulary and not declared in new_topics`);
+    if (typeof d.topic !== "string" || !topicSlug(d.topic)) errors.push(`decision ${i}: topic is required`);
+    else if (!allowed(d.topic)) {
+      // Decision 13: every real summarizer so far put a new topic on a decision
+      // without listing it, so promote it with a warning instead of a retry.
+      if (!Array.isArray(note.new_topics)) note.new_topics = [];
+      note.new_topics.push({ name: topicSlug(d.topic), reason: `used by decision ${i + 1} without being declared`, promoted: true });
+      declared.add(topicSlug(d.topic));
+      warnings.push(`topic "${topicSlug(d.topic)}" was used by a decision without being declared; it was added to the vocabulary`);
+    }
     if (typeof d.statement !== "string" || !d.statement.trim()) errors.push(`decision ${i}: statement is required`);
     else if (d.statement.length > 200) errors.push(`decision ${i}: statement must be at most 200 characters (one sentence)`);
     if (d.rationale !== undefined && typeof d.rationale !== "string") errors.push(`decision ${i}: rationale must be a string`);
@@ -165,7 +185,8 @@ export function extractJson(text) {
 export const DEFAULT_PROMPT = `You write the record of a meeting between AI agents and humans so that later meetings can retrieve what was decided without reading the transcript.
 Be concrete and faithful. Prefer the participants' own terms. A decision is something they agreed to, not something they discussed.
 Use context.topics for topic names; declare a new topic only when none fits. A topic is a short reusable subject that many meetings could share (one to three words, kebab-case, like "retry-policy", "billing", "api-contract"), never this meeting's title or objective. Mark a decision as superseding an entry in context.active_decisions only when it clearly replaces it.
-If provisional_message_ids is non-empty, decisions drawn from those messages are provisional unless the human later confirmed them.`;
+If provisional_message_ids is non-empty, decisions drawn from those messages are provisional unless the human later confirmed them.
+If closing.motion is present, the meeting was closed by that motion's proposer through a vote; credit the close to them, not to a human who happened to be present.`;
 
 function runProcess(cmd, args, input, timeoutMs) {
   return new Promise((resolve, reject) => {
@@ -204,6 +225,11 @@ export function createAdapter(config) {
     return {
       name: "openai-compatible",
       model: profile.model,
+      /** A short free-form question, used by the sweep. */
+      async ask(question) {
+        const { text } = await fallback.complete([{ role: "user", content: question }], { maxTokens: 120, temperature: 0 });
+        return text;
+      },
       async run(envelope) {
         const turns = [{ role: "system", content: `${prompt}\n\n${NOTE_SCHEMA_TEXT}` }, { role: "user", content: `TRANSCRIPT ENVELOPE:\n${JSON.stringify(envelope)}` }];
         let text;
@@ -224,6 +250,9 @@ export function createAdapter(config) {
     return {
       name: "claude-headless",
       model: s.model || "claude-code-default",
+      async ask(question) {
+        return runProcess("claude", args, `${question}\n\nReply with the answer only.`, timeoutMs);
+      },
       async run(envelope) {
         const out = await runProcess("claude", args, `${request(envelope)}\n\nReply with the JSON object only.`, timeoutMs);
         return extractJson(out);
@@ -288,9 +317,11 @@ export async function summarize(adapter, envelope, { log = () => {} } = {}) {
   while (attempt < 2) {
     attempt += 1;
     const note = await adapter.run(input);
-    const errors = validateNote(note, envelope);
+    const promoted = [];
+    const errors = validateNote(note, envelope, promoted);
     if (!errors.length) {
       if (attempt > 1) warnings.push(`the summarizer needed a retry: ${lastErrors.join("; ")}`);
+      warnings.push(...promoted);
       return { note, attempts: attempt, warnings };
     }
     lastErrors = errors;

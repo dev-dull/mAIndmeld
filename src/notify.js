@@ -80,6 +80,7 @@ export function createNotifier(config, log) {
         at: new Date().toISOString(),
         reason: reason || null,
         room: { code: room.code, title: room.title, objective: room.objective, url: `${config.publicOrigin}/rooms/${room.code}` },
+        brief_url: `${config.publicOrigin}/api/rooms/${room.code}/brief`,
       };
       await Promise.all(targets.map(async (t) => {
         try {

@@ -54,11 +54,20 @@ test("validateNote reports every schema problem", () => {
   const good = { title: "t", summary: "s", topics: ["Retry Policy"], decisions: [{ topic: "retries", statement: "x", confidence: "chair", supersedes: ["D-1"] }], participants_summary: { a: "spoke" }, human_involved: false };
   assert.deepEqual(validateNote(good, envelope), [], "names and aliases match after slugifying");
   assert.deepEqual(validateNote({ ...good, participants_summary: { a: 1 } }, envelope), ["participants_summary.a must be a string"]);
-  const bad = { title: "", summary: "s", topics: ["unknown"], new_topics: [{ name: "fresh" }], decisions: [{ topic: "fresh", statement: "x".repeat(201), confidence: "sure", supersedes: ["D-9"] }], human_involved: "yes" };
+
+  // Decision 13: an undeclared decision topic is promoted with a warning, not rejected.
+  const promoted = [];
+  const undeclared = { ...good, topics: ["billing"], decisions: [{ topic: "Billing", statement: "Monthly invoices.", confidence: "chair" }] };
+  assert.deepEqual(validateNote(undeclared, envelope, promoted), []);
+  assert.equal(promoted.length, 1);
+  assert.match(promoted[0], /"billing" was used by a decision without being declared/);
+  assert.deepEqual(undeclared.new_topics, [{ name: "billing", reason: "used by decision 1 without being declared", promoted: true }]);
+  const bad = { title: "", summary: "s", topics: ["unknown"], new_topics: [{ name: "fresh" }], decisions: [{ topic: "", statement: "x".repeat(201), confidence: "sure", supersedes: ["D-9"] }], human_involved: "yes" };
   const errors = validateNote(bad, envelope);
   assert.ok(errors.some((e) => /title must be/.test(e)));
   assert.ok(errors.some((e) => /"unknown" is not in the vocabulary/.test(e)));
   assert.ok(errors.some((e) => /new topic fresh needs a reason/.test(e)));
+  assert.ok(errors.some((e) => /decision 0: topic is required/.test(e)));
   assert.ok(errors.some((e) => /at most 200 characters/.test(e)));
   assert.ok(errors.some((e) => /confidence must be/.test(e)));
   assert.ok(errors.some((e) => /supersedes unknown id D-9/.test(e)));

@@ -234,7 +234,11 @@ function renderRoomMeta(room) {
     banner.textContent = "A human was called and you are here. Acknowledge to say so, or dismiss if the agents can carry on alone.";
     banner.classList.remove("hidden");
   } else banner.classList.add("hidden");
-  $("#human-box").classList.toggle("hidden", !(room.human_required && inRoom && !closed));
+  $("#human-box").classList.toggle("hidden", !(room.human_required && !closed));
+  if (room.human_required && !closed && !state.briefFor) {
+    state.briefFor = room.code;
+    renderBrief(room.code);
+  }
 
   const held = $("#held-banner");
   if (room.held) {
@@ -376,8 +380,74 @@ function initRoom() {
   });
 }
 
+// ---------- sweeps ----------
+
+async function renderSweeps() {
+  const { sweeps, state } = await api("GET", "/api/kb/sweeps");
+  $("#sweep-state").textContent = state.last_sweep_at ? `Last sweep ${ago(state.last_sweep_at)} (${state.last_sweep_id}).` : "No sweep has run yet.";
+  const el = $("#sweeps");
+  if (!sweeps.length) {
+    el.innerHTML = '<div class="empty">No sweeps.</div>';
+    return;
+  }
+  const reports = await Promise.all(sweeps.slice(0, 10).map((s) => api("GET", `/api/kb/sweeps/${s.id}`).then((r) => r.sweep)));
+  el.innerHTML = reports.map((r) => `<section class="panel-box">
+    <h3>${esc(r.id)} · ${ago(r.ran_at)} · ${r.topics_checked.length} topics · ${r.proposals.length} proposals</h3>
+    ${r.proposals.length ? r.proposals.map((p, i) => `<div class="motion" data-sweep="${esc(r.id)}" data-n="${i + 1}">
+      <div class="head">${i + 1}. ${p.type === "supersede" ? `Supersede ${esc(p.older)} with ${esc(p.newer)}` : `Merge topics ${esc(p.topics.join(" and "))}`} <span class="badge status">${esc(p.confidence || "topic")}</span></div>
+      <div class="reason">${esc(p.reason)}${p.rule ? ` (rule ${esc(p.rule)})` : ""}</div>
+      ${p.decision ? `<div class="clock">${esc(p.decision.action)} by ${esc(p.decision.by)} ${ago(p.decision.at)}</div>` : `<div class="buttons"><button data-act="apply">Apply</button><button data-act="reject" class="danger">Reject</button></div>`}
+    </div>`).join("") : '<div class="empty">No proposals.</div>'}
+  </section>`).join("");
+  for (const btn of el.querySelectorAll("button[data-act]")) {
+    btn.addEventListener("click", async () => {
+      const box = btn.closest(".motion");
+      try {
+        await api("POST", `/api/kb/sweeps/${box.dataset.sweep}/proposals/${box.dataset.n}`, { action: btn.dataset.act });
+        toast(btn.dataset.act === "apply" ? "Applied" : "Rejected");
+        renderSweeps();
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+  }
+}
+
+function initSweeps() {
+  whoAmI().catch(() => {});
+  renderSweeps().catch((e) => toast(e.message));
+  for (const [id, all] of [["#run-sweep", false], ["#run-sweep-all", true]]) {
+    $(id).addEventListener("click", async () => {
+      try {
+        const { sweep } = await api("POST", "/api/kb/sweeps/run", { all });
+        toast(`Sweep ${sweep.id}: ${sweep.proposals.length} proposals`);
+        renderSweeps();
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+  }
+}
+
+async function renderBrief(code) {
+  try {
+    const b = await api("GET", `/api/rooms/${code}/brief`);
+    const el = $("#brief");
+    if (!el) return;
+    el.innerHTML = [
+      b.called ? `<div><strong>Why you were called:</strong> ${esc(b.called.reason || "no reason given")} <span class="badge status">${esc(b.called.how)}${b.called.by ? ` by ${esc(b.called.by)}` : ""}</span></div>` : "",
+      `<div><strong>What is needed:</strong> ${esc(b.needed)}</div>`,
+      b.provisional_messages ? `<div class="provisional">${b.provisional_messages} message${b.provisional_messages === 1 ? "" : "s"} decided things while you were away.</div>` : "",
+      b.recent.length ? `<div class="reason">Recent: ${b.recent.map((m) => `${esc(m.sender)}: ${esc(m.content.slice(0, 140))}`).join(" · ")}</div>` : "",
+    ].join("");
+  } catch {
+    // The brief is a convenience; the transcript is still there.
+  }
+}
+
 const page = document.body.dataset.page;
 if (page === "login") initLogin();
 if (page === "lobby") initLobby();
 if (page === "room") initRoom();
 if (page === "note") initNote();
+if (page === "sweeps") initSweeps();

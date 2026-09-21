@@ -16,6 +16,7 @@ How to take part:
 - To end a meeting, file room_motion type "close" with a proposed summary; it carries when every agent agrees or stays silent past their window, and any "no" cancels it. Humans can veto or carry it directly.
 - Ask for a human with room_motion type "call_human" when a decision is outside every participant's authority, when participants disagree after two rounds, when only a person has the information, or when an action is irreversible. A tie means a human is called. While a called human is absent, close is blocked and what you decide is marked provisional.
 - In "only when addressed" mode, speak only when named with @your-name.
+- Before proposing anything that sounds like a decision, call kb_search with its gist (the pre-flight check). If an active decision already covers it, cite the id instead of re-deciding, or say what has changed since. Joining a room also shows you the few decisions most relevant to its objective.
 - Be brief and specific. Address claims and evidence, not identities. Do not repeat what others just said.`;
 
 const TOOLS = [
@@ -149,7 +150,27 @@ const TOOLS = [
     description: "Rooms you are in, rooms that need a human, and other open rooms.",
     inputSchema: { type: "object", properties: { name: { type: "string" } }, additionalProperties: false },
   },
+  {
+    name: "kb_search",
+    description: "Search the knowledge base of decisions from earlier meetings. Call it before proposing anything that sounds like a decision (the pre-flight check): if an active decision already covers it, cite the id instead of re-deciding, or say what has changed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "The gist of what you are about to propose or need to know." },
+        k: { type: "integer", description: "How many results, default 5, maximum 20." },
+        topic: { type: "string", description: "Restrict to one topic slug." },
+        include_inactive: { type: "boolean", description: "Also return superseded and retired decisions." },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+  },
 ];
+
+function formatPrior(list) {
+  if (!list?.length) return "";
+  return ["", "Already decided in earlier meetings (cite by id; do not re-decide unless something changed):", ...list.map((d) => `- ${d.id} [${d.topic}, ${d.date}]: ${d.statement}`)].join("\n");
+}
 
 const rpcError = (id, code, message, data) => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message, ...(data !== undefined ? { data } : {}) } });
 
@@ -162,13 +183,14 @@ export function createMcp({ service, version, log }) {
     const a = args && typeof args === "object" ? args : {};
     const me = a.name || principal.name;
     // Clients do not always enforce `required`, so name the missing field.
-    const needs = { room_create: ["title"], room_join: ["code"], room_send: ["code", "content"], room_listen: ["code"], room_invite: ["code", "kind"], room_status: ["code"], room_leave: ["code"], room_motion: ["code", "type"], room_vote: ["code", "motion_id", "vote"] };
+    const needs = { room_create: ["title"], room_join: ["code"], room_send: ["code", "content"], room_listen: ["code"], room_invite: ["code", "kind"], room_status: ["code"], room_leave: ["code"], room_motion: ["code", "type"], room_vote: ["code", "motion_id", "vote"], kb_search: ["query"] };
     for (const field of needs[name] || []) {
       if (a[field] === undefined || a[field] === null || a[field] === "") throw new Error(`${field} is required for ${name}`);
     }
     switch (name) {
       case "room_create": {
-        const { room, invitation } = await service.createRoom(principal, { title: a.title, objective: a.objective, name: me, kind: "agent", client: "mcp", response_mode: a.response_mode });
+        const created = await service.createRoom(principal, { title: a.title, objective: a.objective, name: me, kind: "agent", client: "mcp", response_mode: a.response_mode });
+        const { room, invitation } = created;
         const notes = [];
         for (const profile of a.invite_models || []) {
           try {
@@ -183,13 +205,15 @@ export function createMcp({ service, version, log }) {
           notes.push("flagged as needing a human");
         }
         const state = await service.listen(room.code, { name: me, wait: 0 });
+        const prior = created.prior_decisions || [];
         return {
-          text: [`Created room ${room.code}: "${room.title}"`, ...notes, "", "Invitation for other sessions (deliver it yourself):", invitation, "", formatListen(state)].join("\n"),
-          data: { code: room.code, invitation, notes, state },
+          text: [`Created room ${room.code}: "${room.title}"`, ...notes, "", "Invitation for other sessions (deliver it yourself):", invitation, formatPrior(prior), "", formatListen(state)].join("\n"),
+          data: { code: room.code, invitation, notes, prior_decisions: prior, state },
         };
       }
       case "room_join": {
-        const { room, participant, rejoined } = await service.join(principal, a.code, { name: me, kind: "agent", client: a.client || "mcp" });
+        const joined = await service.join(principal, a.code, { name: me, kind: "agent", client: a.client || "mcp" });
+        const { room, participant, rejoined } = joined;
         const recent = room.messages.slice(-30);
         return {
           text: [
@@ -197,14 +221,22 @@ export function createMcp({ service, version, log }) {
             room.objective ? `Objective: ${room.objective}` : "",
             `Participants: ${room.participants.map((p) => `${p.name} (${p.kind})`).join(", ")}`,
             `Mode: ${room.response_mode}${room.human_required ? " · a human has been called" : ""}`,
+            formatPrior(joined.prior_decisions),
             "",
             "Recent transcript:",
             ...recent.map(formatMessage),
             "",
             "next: listen",
           ].filter((l) => l !== "").join("\n"),
-          data: { code: room.code, participant, rejoined, recent, next: "listen" },
+          data: { code: room.code, participant, rejoined, recent, prior_decisions: joined.prior_decisions || [], next: "listen" },
         };
+      }
+      case "kb_search": {
+        const results = await service.kb.search(a.query, { k: Math.min(20, Number(a.k) || 5), topic: a.topic, includeInactive: Boolean(a.include_inactive) });
+        const lines = results.length
+          ? results.map((r) => `- ${r.id} [${r.topic}, ${r.date}${r.status !== "active" ? `, ${r.status}` : ""}${r.provisional ? ", provisional" : ""}] (score ${r.score}): ${r.statement}`)
+          : ["No matching decisions. Nothing in the knowledge base covers this; you may propose it."];
+        return { text: [`Knowledge base search for "${a.query}":`, ...lines].join("\n"), data: { query: a.query, results } };
       }
       case "room_send": {
         const message = await service.send(principal, a.code, { sender: me, content: a.content, reply_to: a.reply_to });

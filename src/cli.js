@@ -39,6 +39,9 @@ Knowledge store
   ingest CODE --skip            close a room without waiting for its summary
   resummarize M-ID              rebuild a meeting's note from its transcript
   kb meetings | decisions [TOPIC] | topics | note M-ID | index
+  search "query" [--k N] [--topic T] [--all]
+  brief CODE                    what a called human needs to know
+  sweep [run] [--all] | list | show SWEEP | apply SWEEP N | reject SWEEP N
 
 Administration
   token create NAME | list | revoke NAME
@@ -342,6 +345,55 @@ class Cli {
     } else throw new Error("usage: maindmeld kb meetings | decisions [TOPIC] | topics | note M-ID | index");
   }
 
+  async search(query, flags) {
+    if (!query) throw new Error('usage: maindmeld search "query" [--k N] [--topic T] [--all]');
+    const q = new URLSearchParams({ q: query, k: String(flags.k || 5) });
+    if (typeof flags.topic === "string") q.set("topic", flags.topic);
+    if (flags.all) q.set("all", "1");
+    const { results, embeddings } = await this.api("GET", `/api/kb/search?${q}`);
+    if (!results.length) return this.io.out("no matching decisions");
+    for (const r of results) this.io.out(`${r.score.toFixed(2)}  ${r.id}  [${r.topic}]${r.status !== "active" ? ` (${r.status})` : ""}  ${r.statement}`);
+    if (embeddings.enabled) this.io.out(`(keyword + ${embeddings.model} embeddings, ${embeddings.vectors} vectors)`);
+  }
+
+  async brief(code) {
+    if (!code) throw new Error("usage: maindmeld brief CODE");
+    const b = await this.api("GET", `/api/rooms/${code.toUpperCase()}/brief`);
+    this.io.out(`${b.code} "${b.title}" (${b.status})`);
+    if (b.called) this.io.out(`called ${b.called.how}${b.called.by ? ` by ${b.called.by}` : ""} at ${b.called.at}: ${b.called.reason || "(no reason given)"}`);
+    this.io.out(`needed: ${b.needed}`);
+    if (b.open_motions.length) this.io.out(`open motions: ${b.open_motions.map((m) => `#${m.id} ${m.type} (${m.tally.yes} yes, ${m.tally.no} no)`).join("; ")}`);
+    if (b.provisional_messages) this.io.out(`${b.provisional_messages} provisional message(s)`);
+    for (const m of b.recent) this.io.out(`  #${m.id} ${m.sender}: ${m.content.slice(0, 200)}`);
+  }
+
+  async sweep(action, a, b, flags) {
+    if (!action || action === "run") {
+      const { sweep } = await this.api("POST", "/api/kb/sweeps/run", { all: Boolean(flags.all) });
+      this.io.out(`sweep ${sweep.id}: ${sweep.proposals.length} proposal(s) over ${sweep.topics_checked.length} topic(s)`);
+      sweep.proposals.forEach((p, i) => this.io.out(`  ${i + 1}. ${p.type === "supersede" ? `supersede ${p.older} with ${p.newer} [${p.rule}, ${p.confidence}]` : `merge topics ${p.topics.join(" + ")}`}: ${p.reason}`));
+      return;
+    }
+    if (action === "list") {
+      const { sweeps, state } = await this.api("GET", "/api/kb/sweeps");
+      this.io.out(state.last_sweep_at ? `last sweep ${state.last_sweep_at} (${state.last_sweep_id})` : "no sweep yet");
+      for (const s of sweeps) this.io.out(`${s.id}  ${s.ran_at}  ${s.topics} topics  ${s.proposals} proposals (${s.undecided} undecided)`);
+      return;
+    }
+    if (action === "show") {
+      const { sweep } = await this.api("GET", `/api/kb/sweeps/${a}`);
+      sweep.proposals.forEach((p, i) => this.io.out(`${i + 1}. ${p.type === "supersede" ? `supersede ${p.older} with ${p.newer} [${p.rule}, ${p.confidence}]` : `merge ${p.topics.join(" + ")}`}: ${p.reason}${p.decision ? ` — ${p.decision.action} by ${p.decision.by}` : ""}`));
+      return;
+    }
+    if (action === "apply" || action === "reject") {
+      if (!a || !b) throw new Error(`usage: maindmeld sweep ${action} SWEEP N`);
+      const { proposal } = await this.api("POST", `/api/kb/sweeps/${a}/proposals/${b}`, { action, name: this.config.humanName });
+      this.io.out(`proposal ${b} ${proposal.decision.action} by ${proposal.decision.by}`);
+      return;
+    }
+    throw new Error("usage: maindmeld sweep [run] [--all] | list | show SWEEP | apply SWEEP N | reject SWEEP N");
+  }
+
   async token(action, name) {
     const auth = new Auth(new Store(this.config.dataDir));
     if (action === "create") {
@@ -390,6 +442,9 @@ export async function run(argv = process.argv.slice(2)) {
     ingest: () => cli.ingest(args[0], flags),
     resummarize: () => cli.resummarize(args[0]),
     kb: () => cli.kb(args[0], args[1]),
+    search: () => cli.search(args.join(" "), flags),
+    brief: () => cli.brief(args[0]),
+    sweep: () => cli.sweep(args[0], args[1], args[2], flags),
     token: () => cli.token(args[0], args[1]),
     config: () => (args[0] === "show" ? cli.configShow() : Promise.reject(new Error("usage: maindmeld config show"))),
   };

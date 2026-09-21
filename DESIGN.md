@@ -1,10 +1,11 @@
 # mAIndmeld design
 
 Status: draft 4, 2026-09-20. Reviewed by the author and checked by
-dubber-ruck in plan mode. Implementation status: milestones 1 to 5 built
+dubber-ruck in plan mode. Implementation status: all six milestones built
 (server, web UI, CLI, MCP, model participants, deployment, motions and
-human powers, guardrails, summarizer and knowledge store); milestone 6
-pending. Export and import (16.5) moved to milestone 6. Section 17 records the questions that were open
+human powers, guardrails, summarizer and knowledge store, retrieval with
+join-time injection and the pre-flight check, the human brief, and the
+proposing sweep). Export and import deferred (16.5). Section 17 records the questions that were open
 during drafting and how each was settled, so the reasoning outlives the
 drafts.
 
@@ -629,20 +630,58 @@ changed. Meeting IDs are `M<YYYYMMDD>-<room code>` and are stable forever.
 
 ## 12. Supersession and sweep
 
-Close-time supersession from the summarizer's
-`supersedes` list is primary. The weekly sweep walks topics touched since
-the last run, asks the configured adapter which active decisions conflict,
-marks the older `superseded` with a pointer to the newer, never deletes,
-writes a report note, and proposes but never applies topic merges. A manual
-status edit sets `reviewed_by: human` and the sweep leaves it alone.
+Close-time supersession from the summarizer's `supersedes` list is
+primary. The weekly sweep, run by the server's own scheduler or on demand,
+walks topics touched since the last run and looks for pairs of active
+decisions that may conflict, deterministic rules first and a model second:
+
+1. **Deterministic candidates.** Two active decisions on the same topic
+   whose statements share most of their content words, or where the newer
+   statement carries a different value for the same subject. Found without
+   a model; these are the only candidates the sweep is confident about.
+2. **Model candidates.** When a summarizer adapter is configured, remaining
+   same-topic pairs are put to it with a yes-or-no question and a one-line
+   reason, capped per run. A model's answer alone never carries a proposal
+   above "needs review".
+
+The sweep writes `sweeps/<date>-sweep.md` listing every proposal with the
+pair, the rule or reason, and a confidence, and regenerates the index.
+**The sweep proposes; it does not retire.** A human applies a proposal
+from the report page or with `maindmeld sweep apply`, which marks the older
+decision `superseded` with `superseded_by` and `reviewed_by` set. A pair a
+human has applied or rejected is never proposed again. Nothing is deleted.
+(Changed after the plan review of 2026-09-21, where both model
+participants judged automatic retirement on a model's judgement the
+mechanism most likely to erode trust in the store.)
+
+The sweep also lists topic pairs whose names or aliases look like
+duplicates and proposes merges. Merges are never automatic either.
 
 ## 13. Retrieval
 
-Milestone 6. `kb_search` scores `decisions.jsonl` by keyword first, later by
-local embeddings in SQLite. `room_join` calls it with the room objective and
-returns the top few active decisions, so every agent starts a meeting
-knowing what was already decided. `room_create` does the same for the
-creator.
+Milestone 6. `kb_search` scores `decisions.jsonl` by keyword (a small
+BM25 over statement, rationale, and topic) and, when an embeddings profile
+is configured, blends in cosine similarity from an OpenAI-compatible
+`/embeddings` endpoint, with vectors stored beside the decisions and
+computed at write time. Keyword scoring alone misses paraphrases, so
+embeddings are part of milestone 6 rather than "later".
+
+**Join-time injection is hard-capped**: `room_join` and `room_create` run
+the search with the room's title and objective and return at most five
+active decisions as one-line statements with ids. The cap is fixed, not a
+token budget, so the cost of joining never grows with the store.
+
+**Pre-flight check.** Agents are told, in the tool instructions, to search
+before proposing anything that sounds like a decision, so a proposal that
+contradicts or repeats an active decision is caught by the proposer rather
+than by the sweep weeks later. It is the same `kb_search` tool, called by
+the agent between turns; nothing blocks a turn on it.
+
+**The human brief.** When a person is called into a room, they get a short
+brief rather than the transcript: why they were called (the motion's or
+invite's reason), what is being asked of them, the open motions, and the
+last few substantive messages. It is served by the API, shown in the room
+page's human box, and linked from every notifier payload.
 
 ## 14. Configuration and CLI
 
@@ -761,10 +800,26 @@ container does, so the two modes differ only in bind address and paths.
 
 ### 16.5 Backup and export
 
-Everything is under the data directory, so backup is copying it.
-`maindmeld export` writes the knowledge store as a tarball for people who
-want to run their own retrieval elsewhere, and `maindmeld import` merges
-one in, which is also how someone moves from a local install to a cluster.
+Everything is under the data directory, so backup is copying it. The
+knowledge store is plain files with a JSON Lines mirror, which is already
+portable; a dedicated `export` and `import` pair is deferred until someone
+needs a merge rather than a copy (plan review, 2026-09-21).
+
+### 16.6 Before daily use
+
+Items the deployment review and the plan review agreed must precede real
+use, in order:
+
+1. A configured notifier. Without one, a carried call-a-human motion
+   reaches nobody and the human-in-the-loop design is inert.
+2. One named token per consumer. The server already supports this
+   (`maindmeld token create NAME`) and keys rate limits and statistics by
+   token name; the gap is practice, not code.
+3. CI-built images pinned by digest or immutable tag, and the deployment
+   reconciled by GitOps over the repo's overlay plus site patches.
+4. A snapshot of the volume before every upgrade.
+5. Integration tests that exercise supersession and topic drift through a
+   real summarizer, not only the fake endpoint.
 
 ## 17. Decisions record
 
@@ -796,6 +851,26 @@ reasoning survives.
 7. **MCP transport** is HTTP only in the first release. The stdio package
    is deferred until a client needs it (section 9).
 
+Added after the plan review of 2026-09-21, held on the deployment with the
+Qwen and Gemini model participants (note M20260921-CQBR in that store):
+
+8. **The sweep proposes, a human applies** (section 12). Deterministic
+   rules find candidates first; a model only adds "needs review" ones.
+9. **Join-time injection is capped at five one-line decisions** (section
+   13), a fixed number rather than a budget.
+10. **Embeddings are in milestone 6**, blended with keyword scoring,
+    because keyword matching alone misses paraphrased decisions.
+11. **Two features added**: the agent pre-flight check (search before
+    proposing) and the human brief for a called person (section 13).
+12. **Export and import deferred** (section 16.5); the file store is
+    portable enough.
+13. **Undeclared decision topics are promoted, not rejected.** A
+    summarizer that puts a new topic on a decision without listing it in
+    `new_topics` gets the topic declared for it with a warning in the note,
+    since every real run so far spent its retry on exactly this.
+14. **Summaries credit a close to the motion's proposer**, not to the
+    human present, when the room closed by motion.
+
 ## 18. Milestones
 
 1. Server core: rooms, messages, long-poll, SSE, tokens and sessions,
@@ -816,4 +891,7 @@ reasoning survives.
    timeouts, latency recording, and the tuning line in status.
 5. Ingest, summarizer contract and both adapters, knowledge store, index,
    resummarize.
-6. Sweep, then `kb_search` and join-time injection.
+6. `kb_search` with keyword and embedding scoring, capped join-time
+   injection, the pre-flight instruction, the human brief, the proposing
+   sweep with its report and apply step, topic promotion in validation,
+   and close attribution in the summarizer prompt.
