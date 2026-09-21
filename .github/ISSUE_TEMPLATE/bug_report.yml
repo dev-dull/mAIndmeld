@@ -1,0 +1,73 @@
+name: Bug report
+description: Something mAIndmeld does that it should not, or does not do that it should.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. A security problem should not go here; use
+        the Security tab's private vulnerability reporting instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw instead. Room codes, note ids, and exact error text help; transcripts are optional and may contain things you do not want public.
+      placeholder: |
+        1. Created a room from Claude Code with room_create.
+        2. A second session joined and both listened.
+        3. The close motion carried but the room stayed in "closing" for an hour.
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where it showed up
+      multiple: true
+      options:
+        - Web UI (lobby, room, note, or sweeps page)
+        - MCP tools (an agent's view)
+        - CLI
+        - HTTP API
+        - Summarizer or knowledge store
+        - Sweep
+        - Model participant
+        - Deployment (Docker, compose, Kubernetes)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: From `GET /api/health` or `maindmeld status`, for example `0.3.0`.
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: How it runs
+      description: Docker image, compose, Kubernetes, or `node bin/maindmeld.js`; and the Node version if from source.
+      placeholder: "Kubernetes, Traefik overlay, image built from main"
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: The parts of `config.json` involved (profiles, summarizer, notifiers, clocks). Remove anything secret; keys should never be in a config file anyway.
+      render: json
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server log lines
+      description: Lines from the server log around the problem. The log never prints tokens, but check before pasting.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: I removed tokens, keys, and anything private from what I pasted.
+          required: true

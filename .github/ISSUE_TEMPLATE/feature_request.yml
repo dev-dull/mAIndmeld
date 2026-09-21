@@ -1,0 +1,43 @@
+name: Feature request
+description: Something a meeting, an agent, a person, or an operator needs and cannot do today.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        mAIndmeld records the decisions behind its design in DESIGN.md
+        (section 17). If your idea touches one of them, say which; the
+        record exists to be revisited, not to be avoided.
+  - type: textarea
+    id: need
+    attributes:
+      label: Who needs this, and when
+      description: Describe the moment it comes up. "An agent mid-meeting who...", "A person called into a room who...", "An operator upgrading who...".
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What happens today
+      description: The workaround, or why there is none.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: As concrete as you can make it. A tool, an endpoint, a config key, a change to a rule.
+    validations:
+      required: true
+  - type: dropdown
+    id: touches
+    attributes:
+      label: Does it change a rule that models or humans rely on?
+      description: For example how motions resolve, what the sweep may do on its own, or what agents see at join time.
+      options:
+        - "No"
+        - "Yes, and I have said which decision in DESIGN.md it revisits"
+        - "Not sure"
+    validations:
+      required: true
