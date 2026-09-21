@@ -261,7 +261,9 @@ export class KnowledgeStore {
       room: room.code,
       title: note.title || room.title,
       participants,
-      topics: (note.topics || []).map(topicSlug),
+      // The meeting's topics are what it decided about, not only what the
+      // summarizer listed: a real run put new topics on decisions alone.
+      topics: [...new Set([...(note.topics || []).map(topicSlug), ...created.map((c) => c.topic)])],
       decisions: created.map((c) => c.id),
       human_involved: Boolean(note.human_involved),
       summarizer: { adapter, model: model || null },
