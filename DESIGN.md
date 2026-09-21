@@ -1,3 +1,5 @@
+<img src="src/web/logo.svg" alt="" width="48" height="48" align="left">
+
 # mAIndmeld design
 
 Status: draft 4, 2026-09-20. Reviewed by the author and checked by

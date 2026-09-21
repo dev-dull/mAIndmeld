@@ -1,3 +1,5 @@
+<img src="../../src/web/logo.svg" alt="" width="32" height="32" align="left">
+
 # Kubernetes
 
 Plain manifests for one mAIndmeld instance: a controller-neutral base and
