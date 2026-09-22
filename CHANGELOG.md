@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-22
+
 ### Added
 - Image attachments (issue #2): `POST /api/rooms/:code/attachments` stores
   one PNG, JPEG, WebP, or GIF beside the room file, checked by its bytes and
@@ -78,7 +80,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Notifiers: webhook, ntfy, desktop.
 - Docker image, compose demo, CI, security policy.
 
-[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.0
 [0.3.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.3.0
 [0.2.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.2.0
 [0.1.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.1.0
