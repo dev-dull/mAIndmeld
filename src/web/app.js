@@ -66,14 +66,19 @@ function initLogin() {
 
 // ---------- lobby ----------
 
+// A card is not a link: it holds one (the title) and sometimes another (the
+// note), and anchors cannot nest. Clicking the rest of the card still opens
+// the room, through the delegated handler in initLobby.
 function roomCard(r) {
   const people = r.participants.map((p) => `<span class="badge ${p.kind}">${esc(p.name)}</span>`).join(" ");
-  const note = r.ingest?.note_id ? `<a href="/notes/${esc(r.ingest.note_id)}">note ${esc(r.ingest.note_id)}</a>` : r.status === "closing" ? "summarizing…" : r.ingest?.status === "pending" ? "summary pending" : "";
-  return `<a class="room-card ${r.human_required && !r.human_present ? "needs" : ""}" href="/rooms/${r.code}">
-    <div class="title">${esc(r.title)} <span class="badge status ${r.status === "closing" ? "closing" : ""}">${esc(r.status)}</span></div>
-    <div class="meta"><span>${r.code}</span><span>${r.message_count} messages</span><span>${ago(r.updated_at)}</span>${note ? `<span>${note}</span>` : ""}</div>
-    <div class="meta">${people || '<span class="empty">nobody here</span>'}</div>
-  </a>`;
+  const note = r.ingest?.note_id
+    ? `<a class="note-link" href="/notes/${esc(r.ingest.note_id)}">note ${esc(r.ingest.note_id)}</a>`
+    : r.status === "closing" ? "<span>summarizing…</span>" : r.ingest?.status === "pending" ? "<span>summary pending</span>" : "";
+  return `<article class="room-card ${r.human_required && !r.human_present ? "needs" : ""}" data-href="/rooms/${r.code}">
+    <div class="card-head"><a class="card-title" href="/rooms/${r.code}">${esc(r.title)}</a><span class="badge status ${r.status === "closing" ? "closing" : ""}">${esc(r.status)}</span></div>
+    <div class="card-meta"><code>${r.code}</code><span>${r.message_count} message${r.message_count === 1 ? "" : "s"}</span><span>${ago(r.updated_at)}</span>${note}</div>
+    <div class="card-people">${people || '<span class="empty">nobody here</span>'}</div>
+  </article>`;
 }
 
 function initNote() {
@@ -110,6 +115,13 @@ async function renderLobby() {
 function initLobby() {
   whoAmI().catch(() => {});
   renderLobby().catch((e) => toast(e.message));
+  // Anywhere on a card opens the room, except an actual link inside it.
+  document.addEventListener("click", (e) => {
+    const card = e.target.closest(".room-card");
+    if (!card || e.target.closest("a") || e.button !== 0) return;
+    if (e.metaKey || e.ctrlKey) window.open(card.dataset.href, "_blank");
+    else location.href = card.dataset.href;
+  });
   const es = new EventSource("/api/events");
   let pending = null;
   es.onmessage = es.onerror = null;

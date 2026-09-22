@@ -78,13 +78,17 @@ main { max-width: 1100px; margin: 0 auto; padding: 1.25rem; }
 section h2 { font-size: 0.8rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin: 1.25rem 0 0.5rem; }
 .room-list { display: flex; flex-direction: column; gap: 0.5rem; }
 .room-card {
-  display: block; background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
-  padding: 0.75rem 1rem; text-decoration: none; color: inherit;
+  display: grid; gap: 0.35rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+  padding: 0.75rem 1rem; cursor: pointer;
 }
-.room-card:hover { border-color: var(--accent); }
+.room-card:hover, .room-card:focus-within { border-color: var(--accent); }
 .room-card.needs { border-left: 4px solid var(--warn); }
-.room-card .title { font-weight: 600; }
-.room-card .meta { color: var(--muted); font-size: 0.85rem; display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.card-head { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.card-title { font-weight: 600; color: inherit; text-decoration: none; }
+.card-title:hover, .card-title:focus-visible { text-decoration: underline; }
+.card-meta { color: var(--muted); font-size: 0.85rem; display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: baseline; }
+.card-meta code { font-size: 0.8rem; }
+.card-people { display: flex; gap: 0.3rem; flex-wrap: wrap; }
 .empty { color: var(--muted); font-style: italic; }
 form.create { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1rem; display: grid; gap: 0.6rem; }
 label { font-size: 0.85rem; color: var(--muted); display: grid; gap: 0.25rem; }
