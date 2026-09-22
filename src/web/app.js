@@ -71,12 +71,15 @@ function initLogin() {
 // the room, through the delegated handler in initLobby.
 function roomCard(r) {
   const people = r.participants.map((p) => `<span class="badge ${p.kind}">${esc(p.name)}</span>`).join(" ");
+  // A note is the outcome of closing, so its link sits with the status badge:
+  // "closed 📝" is one fact. The id means nothing to a person; it goes in the tooltip.
   const note = r.ingest?.note_id
-    ? `<a class="note-link" href="/notes/${esc(r.ingest.note_id)}">note ${esc(r.ingest.note_id)}</a>`
-    : r.status === "closing" ? "<span>summarizing…</span>" : r.ingest?.status === "pending" ? "<span>summary pending</span>" : "";
+    ? `<a class="note-link" href="/notes/${esc(r.ingest.note_id)}" title="Read the meeting note (${esc(r.ingest.note_id)})" aria-label="Read the meeting note">📝</a>`
+    : "";
+  const summary = !note && r.status === "closing" ? "<span>summarizing…</span>" : !note && r.ingest?.status === "pending" ? "<span>summary pending</span>" : "";
   return `<article class="room-card ${r.human_required && !r.human_present ? "needs" : ""}" data-href="/rooms/${r.code}">
-    <div class="card-head"><a class="card-title" href="/rooms/${r.code}">${esc(r.title)}</a><span class="badge status ${r.status === "closing" ? "closing" : ""}">${esc(r.status)}</span></div>
-    <div class="card-meta"><code>${r.code}</code><span>${r.message_count} message${r.message_count === 1 ? "" : "s"}</span><span>${ago(r.updated_at)}</span>${note}</div>
+    <div class="card-head"><a class="card-title" href="/rooms/${r.code}">${esc(r.title)}</a><span class="badge status ${r.status === "closing" ? "closing" : ""}">${esc(r.status)}</span>${note}</div>
+    <div class="card-meta"><code>${r.code}</code><span>${r.message_count} message${r.message_count === 1 ? "" : "s"}</span><span>${ago(r.updated_at)}</span>${summary}</div>
     <div class="card-people">${people || '<span class="empty">nobody here</span>'}</div>
   </article>`;
 }

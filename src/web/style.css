@@ -104,6 +104,8 @@ section h2 { font-size: 0.8rem; letter-spacing: 0.1em; text-transform: uppercase
 .card-head { display: flex; align-items: baseline; gap: 0.5rem; }
 .card-title { font-weight: 600; color: inherit; text-decoration: none; flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .card-head .badge { flex: none; }
+.card-head .note-link { flex: none; text-decoration: none; font-size: 1rem; line-height: 1; padding: 0 0.1rem; border-radius: 4px; }
+.card-head .note-link:hover, .card-head .note-link:focus-visible { background: var(--tint); }
 .card-title:hover, .card-title:focus-visible { text-decoration: underline; }
 .card-meta { color: var(--muted); font-size: 0.85rem; display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: baseline; }
 .card-meta code { font-size: 0.8rem; }
