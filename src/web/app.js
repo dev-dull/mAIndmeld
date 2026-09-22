@@ -145,12 +145,52 @@ function initLobby() {
 
 const state = { room: null, me: null, seen: new Set() };
 
-// Until the room page renders images inline (issue #3), an attachment shows as a link.
+// Inline image with its caption. The plain path is used, not the signed link
+// a message may carry: the browser is signed in, and the link would expire.
 function attachmentHtml(m) {
   if (!m.attachment) return "";
   const a = m.attachment;
-  const href = a.url || `/api/rooms/${esc(state.room?.code || "")}/attachments/${esc(a.id)}`;
-  return `<div class="attachment"><a href="${href}" target="_blank" rel="noopener">[image: ${esc(a.caption || "no caption")}]</a></div>`;
+  const code = location.pathname.split("/")[2];
+  const src = `/api/rooms/${esc(code)}/attachments/${esc(a.id)}`;
+  const caption = esc(a.caption || "image");
+  return `<figure class="attachment"><a href="${src}" target="_blank" rel="noopener"><img src="${src}" alt="${caption}" loading="lazy"></a><figcaption>${caption}</figcaption></figure>`;
+}
+
+// The image waiting in the composer, if any. Uploaded on send, not before,
+// so a change of mind costs nothing and a failed upload leaves the text alone.
+const pending = { file: null, previewUrl: null };
+
+function setPendingImage(file) {
+  if (pending.previewUrl) URL.revokeObjectURL(pending.previewUrl);
+  pending.file = file || null;
+  pending.previewUrl = file ? URL.createObjectURL(file) : null;
+  const strip = $("#attach-strip");
+  if (!strip) return;
+  strip.classList.toggle("hidden", !file);
+  if (file) {
+    $("#attach-preview").src = pending.previewUrl;
+    $("#attach-name").textContent = `${file.name || "pasted image"} · ${Math.round(file.size / 1024)} KB`;
+    $("#attach-caption").focus();
+  } else {
+    $("#attach-preview").removeAttribute("src");
+    $("#attach-caption").value = "";
+    $("#attach-file").value = "";
+  }
+}
+
+const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+function pickImage(file) {
+  if (!file) return;
+  if (!IMAGE_TYPES.includes(file.type)) return toast("Only PNG, JPEG, WebP, and GIF images can be attached");
+  setPendingImage(file);
+}
+
+async function uploadPending(code) {
+  const res = await fetch(`/api/rooms/${code}/attachments`, { method: "POST", headers: { "content-type": pending.file.type }, body: pending.file, credentials: "same-origin" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `upload failed (${res.status})`);
+  return data.attachment;
 }
 
 function renderMessage(m) {
@@ -270,7 +310,8 @@ function renderRoomMeta(room) {
   $("#hold-btn").disabled = closed;
 
   $("#composer textarea").disabled = closed;
-  $("#composer button").disabled = closed;
+  $("#composer button[type=submit]").disabled = closed;
+  $("#attach-file").disabled = closed;
   $("#close-btn").disabled = closed;
   $("#mode-btn").classList.toggle("on", room.response_mode === "addressed_only");
   $("#mode-btn").textContent = room.response_mode === "addressed_only" ? "Only when addressed: on" : "Only when addressed: off";
@@ -344,13 +385,45 @@ function initRoom() {
     e.preventDefault();
     const ta = $("#composer textarea");
     const content = ta.value.trim();
-    if (!content) return;
+    const caption = $("#attach-caption").value.trim();
+    if (!content && !pending.file) return;
+    if (pending.file && caption.length < 3) {
+      $("#attach-caption").focus();
+      return toast("Give the image a caption: what it shows and why it matters");
+    }
+    const btn = $("#composer button[type=submit]");
+    btn.disabled = true;
+    $(".attach-btn").classList.add("busy");
     try {
       await ensureJoined(code);
-      await api("POST", `/api/rooms/${code}/messages`, { content });
+      const body = { content };
+      if (pending.file) {
+        const a = await uploadPending(code);
+        body.attachment_id = a.id;
+        body.caption = caption;
+      }
+      await api("POST", `/api/rooms/${code}/messages`, body);
       ta.value = "";
+      setPendingImage(null);
     } catch (error) {
-      toast(error.message);
+      toast(error.message); // text and image stay in the composer
+    } finally {
+      btn.disabled = false;
+      $(".attach-btn").classList.remove("busy");
+    }
+  });
+  $("#attach-file").addEventListener("change", (e) => pickImage(e.target.files[0]));
+  $("#attach-remove").addEventListener("click", () => setPendingImage(null));
+  $("#composer textarea").addEventListener("paste", (e) => {
+    const item = [...(e.clipboardData?.items || [])].find((i) => i.kind === "file" && IMAGE_TYPES.includes(i.type));
+    if (!item) return;
+    e.preventDefault();
+    pickImage(item.getAsFile());
+  });
+  $("#attach-caption").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      $("#composer").requestSubmit();
     }
   });
   $("#composer textarea").addEventListener("keydown", (e) => {

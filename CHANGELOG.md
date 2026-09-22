@@ -12,8 +12,12 @@ follow [Semantic Versioning](https://semver.org/).
   capped per file and per room; messages and `room_send` take an
   `attachment_id` and `caption`; the bytes are served to participants or by
   a signed five-minute link; uploads never sent on a message are cleaned up.
-  Models, the summarizer, and the web page see `[image: caption]` until the
-  follow-up issues land.
+  Models and the summarizer see `[image: caption]` until the follow-up
+  issues land.
+- The room page attaches images (issue #3): a picker beside the composer,
+  or paste one in; a preview strip with a caption field; the upload happens
+  on send, so a failure leaves the text and image in the composer; images
+  render inline with the caption, and open full size in a new tab.
 
 ## [0.3.0] - 2026-09-21
 

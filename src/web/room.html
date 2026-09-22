@@ -28,8 +28,23 @@
       </div>
       <div class="transcript" id="transcript"></div>
       <form class="composer" id="composer">
-        <textarea rows="1" placeholder="Say something… (Enter to send, Shift+Enter for a new line)"></textarea>
-        <button class="primary" type="submit">Send</button>
+        <div class="attach-strip hidden" id="attach-strip">
+          <img id="attach-preview" alt="">
+          <div class="attach-fields">
+            <div class="attach-name" id="attach-name"></div>
+            <input id="attach-caption" type="text" maxlength="500" placeholder="Caption: what the image shows and why it matters">
+            <div class="attach-hint">Participants that cannot see images get only the caption.</div>
+          </div>
+          <button type="button" class="small" id="attach-remove" title="Remove the image">Remove</button>
+        </div>
+        <div class="composer-row">
+          <label class="attach-btn" title="Attach an image (or paste one)">
+            <input type="file" id="attach-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+            <span aria-hidden="true">&#128247;</span><span class="visually-hidden">Attach an image</span>
+          </label>
+          <textarea rows="1" placeholder="Say something… (Enter to send, Shift+Enter for a new line, paste an image to attach it)"></textarea>
+          <button class="primary" type="submit">Send</button>
+        </div>
       </form>
     </section>
     <aside class="panel">

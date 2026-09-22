@@ -153,6 +153,28 @@ test("closing a room leaves its attachments in place; an older room file without
   assert.equal(got.data.room.messages.find((m) => m.attachment)?.attachment.id, a.id, "the message keeps its attachment field");
 });
 
+test("the SSE stream carries the attachment on the message, so another browser can render it", async () => {
+  const code = await room("SSE");
+  const controller = new AbortController();
+  const res = await fetch(`${s.base}/api/rooms/${code}/events`, { headers: { authorization: `Bearer ${s.token}` }, signal: controller.signal });
+  assert.equal(res.status, 200);
+  const reader = res.body.getReader();
+  const a = (await upload(code, PNG_1x1)).data.attachment;
+  await s.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "builder", content: "look", attachment_id: a.id, caption: "a gradient" } });
+  let text = "";
+  const decoder = new TextDecoder();
+  while (!text.includes("a gradient")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+  }
+  controller.abort();
+  const event = text.split("\n\n").map((block) => block.split("\n").find((l) => l.startsWith("data:"))).filter(Boolean).map((l) => JSON.parse(l.slice(5))).find((e) => e.message?.attachment);
+  assert.ok(event, text);
+  assert.equal(event.message.attachment.id, a.id);
+  assert.equal(event.message.attachment.caption, "a gradient");
+});
+
 test("an upload never attached to a message is removed by the tick after the orphan window", async () => {
   const t = await boot({ limits: { attachment_orphan_seconds: 1, rooms_per_hour: 100 } });
   try {
