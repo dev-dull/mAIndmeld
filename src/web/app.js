@@ -343,7 +343,7 @@ function renderRoomMeta(room) {
     ? room.participants.map((p) => {
         const age = now - Date.parse(p.last_seen_at);
         const dot = age < 90_000 ? "live" : age < 600_000 ? "idle" : "";
-        const more = motionOpen && p.kind !== "human" ? `<button class="small human-only" data-more="${esc(p.name)}">give time</button>` : "";
+        const more = motionOpen && p.kind !== "human" ? `<button class="small" data-more="${esc(p.name)}">give time</button>` : "";
         return `<div class="person"><span class="dot ${dot}"></span><span>${esc(p.name)}</span><span class="badge ${p.kind}">${p.kind}</span>${more}</div>`;
       }).join("")
     : '<div class="empty">Nobody here.</div>';
