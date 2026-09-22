@@ -291,7 +291,7 @@ function renderRoomMeta(room) {
   $("#room-title").textContent = room.title;
   $("#room-code").textContent = room.code;
   $("#room-status").textContent = room.status;
-  $("#objective").textContent = room.objective || "No objective set.";
+  $("#objective-text").textContent = room.objective || "No objective set.";
   $("#objective").classList.toggle("hidden", !room.objective);
   const closed = room.status !== "open";
   const inRoom = room.participants.some((p) => p.name.toLowerCase() === state.me?.name.toLowerCase());

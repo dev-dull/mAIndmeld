@@ -22,7 +22,7 @@
   <main class="room-layout">
     <section class="conversation">
       <div>
-        <div class="objective" id="objective"></div>
+        <div class="objective" id="objective"><span class="label">Objective</span><span id="objective-text"></span></div>
         <div class="banner hidden" id="banner"></div>
         <div class="banner held hidden" id="held-banner"></div>
       </div>
@@ -48,6 +48,12 @@
       </form>
     </section>
     <aside class="panel">
+      <div class="panel-box personal called actions hidden" id="human-box">
+        <h3>You were called</h3>
+        <div id="brief" class="motion"></div>
+        <button id="ack-btn" class="human-only">I'm here, carry on</button>
+        <button id="dismiss-btn" class="human-only">You don't need me</button>
+      </div>
       <div class="panel-box room">
         <h3>In this room</h3>
         <div class="people" id="people"></div>
