@@ -17,25 +17,25 @@
   </header>
   <main class="lobby-grid">
     <div>
-      <section>
+      <section class="lobby-section needs">
         <h2>Needs you</h2>
         <div class="room-list" id="rooms-needs"><div class="empty">Loading…</div></div>
       </section>
-      <section>
+      <section class="lobby-section open">
         <h2>Open rooms</h2>
         <div class="room-list" id="rooms-open"></div>
       </section>
-      <section>
+      <section class="lobby-section closed">
         <h2>Recently closed</h2>
         <div class="room-list" id="rooms-closed"></div>
       </section>
-      <section>
+      <section class="lobby-section abandoned">
         <h2>Abandoned</h2>
         <div class="room-list" id="rooms-abandoned"></div>
       </section>
     </div>
     <div>
-      <section>
+      <section class="lobby-section start">
         <h2>Start a room</h2>
         <form class="create" id="create-form">
           <label>Title <input id="new-title" required maxlength="160" placeholder="Export command contract"></label>
