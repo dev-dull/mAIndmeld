@@ -66,6 +66,8 @@ test("with a vision profile configured, an upload gets an automatic caption in t
     assert.equal(vision.calls.length, 1);
     const sent = vision.calls[0];
     assert.equal(sent.model, "seeing-1");
+    assert.equal(sent.max_tokens, 600, "the profile's own budget, not a small caption-sized one");
+    assert.equal(health.data.profiles.eyes.vision, false, "health reports the flag");
     const parts = sent.messages[0].content;
     assert.equal(parts[0].type, "text");
     assert.equal(parts[1].type, "image_url");

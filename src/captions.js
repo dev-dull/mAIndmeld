@@ -30,7 +30,9 @@ export function createCaptioner(config, log = () => {}) {
       try {
         const { text } = await client.complete(
           [{ role: "user", content: [{ type: "text", text: PROMPT }, { type: "image_url", image_url: { url: dataUri } }] }],
-          { maxTokens: 80, temperature: 0 },
+          // The profile's own budget, never a small one: a thinking model spends
+          // reasoning tokens first, and a tight cap returns an empty reply.
+          { maxTokens: Math.max(profile.maxTokens || 0, 300), temperature: 0 },
         );
         const line = text.split("\n").find((l) => l.trim()) || "";
         const clean = line.trim().replace(/^caption:\s*/i, "").slice(0, 300);
