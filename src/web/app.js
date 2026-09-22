@@ -252,9 +252,10 @@ function renderMotions(room) {
   el.innerHTML = open.map((m) => {
     const voters = m.eligible.map((n) => {
       const v = m.votes[n];
-      const cls = v || (m.delivered_to[n] ? "pending" : "");
+      const cls = v || (m.delivered_to[n] ? "pending" : "undelivered");
+      const mark = v === "yes" ? "✓" : v === "no" ? "✗" : m.delivered_to[n] ? "…" : "·";
       const label = v ? `${n}: ${v}` : m.delivered_to[n] ? `${n}: waiting (${countdown(m.windows[n])})` : `${n}: not yet delivered`;
-      return `<span class="voter ${cls}">${esc(label)}</span>`;
+      return `<span class="voter ${cls}" title="${esc(label)}"><span class="mark" aria-hidden="true">${mark}</span>${esc(label)}</span>`;
     }).join("");
     const what = m.type === "close" ? "Close the meeting" : "Call a human";
     const text = m.type === "close" ? m.summary : m.reason;
@@ -264,9 +265,9 @@ function renderMotions(room) {
       <div class="tally">${voters}</div>
       <div class="clock">${room.held ? "on hold" : `hard deadline in ${countdown(m.hard_deadline)}`}</div>
       <div class="buttons">
-        <button data-act="carry">Carry now</button>
-        <button data-act="cancel" class="danger">${m.type === "close" ? "Veto" : "Cancel"}</button>
-        <button data-act="wait">Wait 5 min</button>
+        <button data-act="carry" class="human-only">Carry now</button>
+        <button data-act="cancel" class="danger human-only">${m.type === "close" ? "Veto" : "Cancel"}</button>
+        <button data-act="wait" class="human-only">Wait 5 min</button>
       </div>
     </div>`;
   }).join("");
@@ -342,7 +343,7 @@ function renderRoomMeta(room) {
     ? room.participants.map((p) => {
         const age = now - Date.parse(p.last_seen_at);
         const dot = age < 90_000 ? "live" : age < 600_000 ? "idle" : "";
-        const more = motionOpen && p.kind !== "human" ? `<button class="small" data-more="${esc(p.name)}">give time</button>` : "";
+        const more = motionOpen && p.kind !== "human" ? `<button class="small human-only" data-more="${esc(p.name)}">give time</button>` : "";
         return `<div class="person"><span class="dot ${dot}"></span><span>${esc(p.name)}</span><span class="badge ${p.kind}">${p.kind}</span>${more}</div>`;
       }).join("")
     : '<div class="empty">Nobody here.</div>';
