@@ -6,6 +6,22 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-22
+
+### Fixed
+- Lobby cards with a note link rendered split apart: the card was an anchor
+  holding another anchor. The title is now the link, the note a second one,
+  and clicking the rest of the card still opens the room (#14).
+- Automatic captions use the profile's own token budget instead of a small
+  fixed one, which a thinking model could exhaust before answering.
+
+### Changed
+- Lobby cards have one anatomy: title row with the status badge, meta row,
+  participants row; participants wrap and are never truncated (#15).
+- Lobby sections carry a coloured left rail and heading, the create form
+  matches the cards, and every colour comes from a theme token (#16).
+- `GET /api/health` reports each profile's `vision` flag.
+
 ## [0.4.0] - 2026-09-22
 
 ### Added
@@ -80,7 +96,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Notifiers: webhook, ntfy, desktop.
 - Docker image, compose demo, CI, security policy.
 
-[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.1
 [0.4.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.0
 [0.3.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.3.0
 [0.2.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.2.0
