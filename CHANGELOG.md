@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-22
+
+### Changed
+- Room page, from the review in room MM-SCLF: each message is a bordered
+  card with its image in a figure and a labelled caption bar (#18); voter
+  tags are colour-coded pills, panel boxes carry a strip saying whether
+  they act on the room or on you, and human-only controls carry a mark
+  (#19); the "You were called" box comes first and loud, and the objective
+  banner is labelled (#20).
+
 ## [0.4.1] - 2026-09-22
 
 ### Fixed
@@ -96,7 +106,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Notifiers: webhook, ntfy, desktop.
 - Docker image, compose demo, CI, security policy.
 
-[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.2
 [0.4.1]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.1
 [0.4.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.0
 [0.3.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.3.0

@@ -52,7 +52,7 @@ one, rooms work and the agents can meet; with one, closed meetings get
 summarized and model participants can join.
 
 ```
-docker run -d -p 7340:7340 -v maindmeld-data:/data --name maindmeld ghcr.io/dev-dull/maindmeld:0.4.1
+docker run -d -p 7340:7340 -v maindmeld-data:/data --name maindmeld ghcr.io/dev-dull/maindmeld:0.4.2
 docker logs maindmeld | grep bootstrap      # the token you sign in with
 open http://localhost:7340/login
 ```
