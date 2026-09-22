@@ -74,6 +74,95 @@ export function imageDimensions(buf, type) {
   return null;
 }
 
+/**
+ * Remove metadata before an image leaves the server for a model: EXIF, GPS,
+ * ICC profiles, XMP, and text chunks. Byte-level segment removal, no decoding,
+ * so the pixels are untouched. Unknown or malformed input is returned as is.
+ */
+export function stripMetadata(buf, type) {
+  try {
+    if (type === "image/jpeg") return stripJpeg(buf);
+    if (type === "image/png") return stripPng(buf);
+    if (type === "image/webp") return stripWebp(buf);
+  } catch {
+    return buf;
+  }
+  return buf;
+}
+
+const JPEG_DROP = new Set([0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef, 0xfe]); // APP1..APP15 and COM; APP0 (JFIF) stays
+
+function stripJpeg(buf) {
+  const parts = [buf.subarray(0, 2)];
+  let i = 2;
+  while (i + 4 <= buf.length) {
+    if (buf[i] !== 0xff) break;
+    const marker = buf[i + 1];
+    if (marker === 0xff) {
+      // Fill byte before a marker: keep it, look at the next byte.
+      parts.push(buf.subarray(i, i + 1));
+      i += 1;
+      continue;
+    }
+    if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
+      parts.push(buf.subarray(i, i + 2));
+      i += 2;
+      continue;
+    }
+    if (marker === 0xda || marker === 0xd9) break; // scan data or end: everything after stays
+    const len = buf.readUInt16BE(i + 2);
+    if (!JPEG_DROP.has(marker)) parts.push(buf.subarray(i, i + 2 + len));
+    i += 2 + len;
+  }
+  parts.push(buf.subarray(i));
+  return Buffer.concat(parts);
+}
+
+const PNG_DROP = new Set(["tEXt", "iTXt", "zTXt", "eXIf", "tIME"]);
+
+function stripPng(buf) {
+  const parts = [buf.subarray(0, 8)];
+  let i = 8;
+  while (i + 12 <= buf.length) {
+    const len = buf.readUInt32BE(i);
+    const name = buf.subarray(i + 4, i + 8).toString("latin1");
+    const end = i + 12 + len;
+    if (!PNG_DROP.has(name)) parts.push(buf.subarray(i, end));
+    i = end;
+    if (name === "IEND") break;
+  }
+  return Buffer.concat(parts);
+}
+
+function stripWebp(buf) {
+  const parts = [];
+  let i = 12;
+  let vp8x = null;
+  while (i + 8 <= buf.length) {
+    const name = buf.subarray(i, i + 4).toString("latin1");
+    const len = buf.readUInt32LE(i + 4);
+    const end = i + 8 + len + (len % 2);
+    if (name === "EXIF" || name === "XMP ") {
+      i = end;
+      continue;
+    }
+    const chunk = Buffer.from(buf.subarray(i, Math.min(end, buf.length)));
+    if (name === "VP8X") {
+      chunk[8] &= ~0x0c; // clear the EXIF (bit 3) and XMP (bit 2) flags
+      vp8x = chunk;
+    }
+    parts.push(chunk);
+    i = end;
+  }
+  const body = Buffer.concat(parts);
+  const head = Buffer.alloc(12);
+  head.write("RIFF", 0, "latin1");
+  head.writeUInt32LE(body.length + 4, 4);
+  head.write("WEBP", 8, "latin1");
+  void vp8x;
+  return Buffer.concat([head, body]);
+}
+
 export function newAttachmentId() {
   return crypto.randomBytes(8).toString("hex");
 }

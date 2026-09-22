@@ -31,3 +31,44 @@ export const WEBP_3x4 = (() => {
 export const PNG_SPOOF = Buffer.concat([PNG_1x1.subarray(0, 8), Buffer.from("this is text pretending to be a png and it is long enough", "latin1")]);
 
 export const TEXT = Buffer.from("just some text, definitely not an image at all here", "utf8");
+
+// The same JPEG with an APP1 EXIF segment carrying a fake GPS tag, and a COM segment.
+export const JPEG_WITH_EXIF = (() => {
+  const exif = Buffer.concat([Buffer.from("Exif\0\0", "latin1"), Buffer.from("II*\0GPSLatitude=51.5074", "latin1")]);
+  const app1 = Buffer.concat([Buffer.from([0xff, 0xe1]), Buffer.from([(exif.length + 2) >> 8, (exif.length + 2) & 0xff]), exif]);
+  const comment = Buffer.from("taken at home", "latin1");
+  const com = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from([(comment.length + 2) >> 8, (comment.length + 2) & 0xff]), comment]);
+  return Buffer.concat([JPEG_32x16.subarray(0, 2), app1, com, JPEG_32x16.subarray(2)]);
+})();
+
+/** PNG chunk helper for fixtures. */
+function pngChunk(name, data) {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(name, "latin1"), data]);
+  const crc = Buffer.alloc(4); // a wrong CRC is fine for these tests; nothing decodes the pixels
+  return Buffer.concat([len, body, crc]);
+}
+
+// The 1x1 PNG with a tEXt chunk and an eXIf chunk spliced in before IEND.
+export const PNG_WITH_TEXT = (() => {
+  const iendAt = PNG_1x1.length - 12;
+  return Buffer.concat([
+    PNG_1x1.subarray(0, iendAt),
+    pngChunk("tEXt", Buffer.from("Author\0Someone Private", "latin1")),
+    pngChunk("eXIf", Buffer.from("II*\0GPS", "latin1")),
+    PNG_1x1.subarray(iendAt),
+  ]);
+})();
+
+// An extended WebP: VP8X with the EXIF flag set, a VP8L chunk, and an EXIF chunk.
+export const WEBP_WITH_EXIF = (() => {
+  const vp8x = Buffer.concat([Buffer.from("VP8X", "latin1"), Buffer.from([10, 0, 0, 0]), Buffer.from([0x08, 0, 0, 0, 2, 0, 0, 3, 0, 0])]); // flags: EXIF; 3x4
+  const vp8l = Buffer.concat([Buffer.from("VP8L", "latin1"), Buffer.from([5, 0, 0, 0]), Buffer.from([0x2f, 0x02, 0xc0, 0x00, 0x00, 0x00])]);
+  const exifData = Buffer.from("II*\0GPS here", "latin1");
+  const exif = Buffer.concat([Buffer.from("EXIF", "latin1"), Buffer.from([exifData.length, 0, 0, 0]), exifData, Buffer.alloc(exifData.length % 2)]);
+  const body = Buffer.concat([Buffer.from("WEBP", "latin1"), vp8x, vp8l, exif]);
+  const size = Buffer.alloc(4);
+  size.writeUInt32LE(body.length);
+  return Buffer.concat([Buffer.from("RIFF", "latin1"), size, body]);
+})();

@@ -23,6 +23,14 @@ follow [Semantic Versioning](https://semver.org/).
   summarizer see. `captions.profile` names a vision-capable profile that
   adds a one-sentence automatic caption in the background, never blocking
   the upload and never replacing the person's caption.
+- Vision for model participants (issue #5): a profile with `vision: true`
+  gets the newest four images from others as data-URI image parts with
+  metadata stripped, within 1 MB and `image_max_px`; anything else, and
+  every other profile, gets the caption line. A rejected image part is an
+  ordinary failure.
+- The summarizer sees captions only (issue #6): the envelope renders an
+  image as `[image: caption]` with any generated description, and the
+  prompt asks for images to be cited by caption, never by id or link.
 
 ## [0.3.0] - 2026-09-21
 

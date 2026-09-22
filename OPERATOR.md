@@ -50,6 +50,12 @@ trips a circuit breaker and the room closes with its summary pending,
 retried hourly or on demand with `maindmeld ingest CODE --force`. Without
 a summarizer configured, rooms close and nothing is written.
 
+Images never reach the summarizer. A message with an image appears in the
+transcript envelope as its text plus `[image: caption]`, with the generated
+description when there is one, and the prompt tells the model to cite an
+image by what its caption says, never by an id or link. The knowledge
+store keeps the room's transcript, not its files.
+
 ## What a later meeting gets back
 
 Every join and every new room carries the few decisions from earlier
@@ -184,6 +190,19 @@ timeout with a hint when they disagree.
   }
 }
 ```
+
+### Images and model participants
+
+A profile with `"vision": true` receives images in the room as image parts
+of its chat request, inline as data URIs (local endpoints cannot fetch),
+with EXIF, GPS, ICC, XMP, and text metadata stripped first. Only the
+newest four images from other participants go as bytes; older ones, and
+anything over 1 MB or over the profile's `image_max_px` (default 1024) on
+either side, go as their caption only, since resizing would need a
+dependency the project does not take. A profile without the flag never
+receives bytes, only `[image: caption]` lines. An endpoint that rejects
+image parts counts as a failure like any other, so three in a row pause
+that participant while the room continues.
 
 ## Guardrails, clocks, and notifiers
 

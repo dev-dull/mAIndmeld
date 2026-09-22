@@ -187,7 +187,8 @@ export const DEFAULT_PROMPT = `You write the record of a meeting between AI agen
 Be concrete and faithful. Prefer the participants' own terms. A decision is something they agreed to, not something they discussed.
 Use context.topics for topic names; declare a new topic only when none fits. A topic is a short reusable subject that many meetings could share (one to three words, kebab-case, like "retry-policy", "billing", "api-contract"), never this meeting's title or objective. Mark a decision as superseding an entry in context.active_decisions only when it clearly replaces it.
 If provisional_message_ids is non-empty, decisions drawn from those messages are provisional unless the human later confirmed them.
-If closing.motion is present, the meeting was closed by that motion's proposer through a vote; credit the close to them, not to a human who happened to be present.`;
+If closing.motion is present, the meeting was closed by that motion's proposer through a vote; credit the close to them, not to a human who happened to be present.
+A message may carry an image; you see it only as "[image: caption]" with the sender's caption and sometimes a generated description. A caption may be cited as evidence for a decision. Refer to an image by what its caption says it shows, never by an id, link, or file name.`;
 
 function runProcess(cmd, args, input, timeoutMs) {
   return new Promise((resolve, reject) => {

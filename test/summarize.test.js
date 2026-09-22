@@ -124,3 +124,24 @@ test("the breaker opens after five failures or a rate limit and doubles its paus
   assert.equal(b.failure({ rateLimited: true }), 1_200_000);
   assert.match(b.state().until, /^\d{4}-/);
 });
+
+test("the envelope shows an image as its caption only: no id, no link, and the generated description when present", () => {
+  const dir = tmpDataDir();
+  try {
+    const kb = new KnowledgeStore(path.join(dir, "kb"));
+    const r = rooms.createRoom({ title: "Pictures", objective: "Look", creator: { name: "a", kind: "agent" } });
+    rooms.registerAttachment(r, { id: "0123456789abcdef", type: "image/png", ext: "png", bytes: 68, width: 1, height: 1, by: "a" });
+    rooms.setAutoCaption(r, "0123456789abcdef", "a teal square");
+    rooms.sendMessage(r, { sender: "a", content: "the spike", attachment_id: "0123456789abcdef", caption: "latency spike at 14:02" }, 65536);
+    rooms.closeRoom(r, { by: "a", kind: "agent", summary: "done" });
+    const { envelope } = buildEnvelope(r, kb);
+    const line = envelope.messages.find((m) => m.sender === "a" && m.kind === "agent");
+    assert.equal(line.content, "the spike\n[image: latency spike at 14:02 (described as: a teal square)]");
+    const json = JSON.stringify(envelope);
+    assert.ok(!json.includes("0123456789abcdef"), "no attachment id reaches the summarizer");
+    assert.ok(!json.includes("/attachments/"), "no link either");
+    assert.ok(!("attachment" in line));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

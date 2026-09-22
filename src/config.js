@@ -109,6 +109,8 @@ export function loadConfig(overrides = {}, env = process.env) {
       maxTokens: intFrom(p.max_tokens, 600, `profile ${key} max_tokens`),
       maxCallsPerHour: intFrom(p.max_calls_per_hour, 120, `profile ${key} max_calls_per_hour`),
       temperature: p.temperature === undefined ? undefined : Number(p.temperature),
+      vision: p.vision === true,
+      imageMaxPx: intFrom(p.image_max_px, 1024, `profile ${key} image_max_px`),
     };
   }
   const abandonAfterSeconds = intFrom(file.abandon_after_seconds, DEFAULTS.abandonAfterSeconds, "abandon_after_seconds");
@@ -229,6 +231,8 @@ export function describeConfig(config) {
       window: p.window,
       max_tokens: p.maxTokens,
       max_calls_per_hour: p.maxCallsPerHour,
+      vision: p.vision,
+      image_max_px: p.imageMaxPx,
     }])),
     limits: {
       messages_per_minute: config.limits.messagesPerMinute,

@@ -477,6 +477,12 @@ Model participants respect `addressed_only` and a minimum gap between their
 own replies. They never file `close` and are not eligible to vote on it;
 they may file `call_human` and vote on it.
 
+Images for model participants (decision 15): a profile flagged `vision`
+gets the newest few images from others as data-URI image parts, metadata
+stripped, within a size cap; everything else, and every non-vision
+profile, sees the caption line only. A rejected image part is an ordinary
+failure and pauses the participant through the existing back-off.
+
 ## 8. Web chat interface
 
 Served by the server at the loopback origin, vanilla HTML and JavaScript,
@@ -568,6 +574,11 @@ The job writes the raw room JSON to the store unchanged, then builds the
 envelope the summarizer receives: room metadata, participants, the closing
 motion, the messages, and `context` with the topic vocabulary and up to 40
 active decisions whose topics keyword-match the transcript.
+
+Images are not in the envelope. A message with an image is rendered as
+its text plus `[image: caption]`, including any generated description,
+and the prompt asks the summarizer to cite an image by its caption, never
+by an id or link.
 
 ### 10.2 Summarizer contract
 

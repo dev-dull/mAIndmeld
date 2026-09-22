@@ -66,8 +66,16 @@ Address evidence and claims, not identities. Say plainly when you are unsure or 
 Do not restate what others just said. Do not introduce yourself unless asked.
 If you have nothing useful to add, reply with exactly ${PASS} and nothing else.`;
 
-/** Build chat-completion messages from a room transcript. */
-export function buildPrompt(room, name, profile) {
+/** How many of the newest images a vision profile receives as bytes; older ones stay captions. */
+export const INLINE_IMAGES = 4;
+
+/**
+ * Build chat-completion messages from a room transcript. With a vision
+ * profile and an image loader, the newest few attachments become image
+ * parts (a data URI, since local endpoints cannot fetch); everything else
+ * about an image is its caption line. Non-vision profiles never get bytes.
+ */
+export function buildPrompt(room, name, profile, { loadImage } = {}) {
   const system = [
     (profile.systemPrompt || DEFAULT_SYSTEM).replaceAll("{name}", name),
     "",
@@ -80,15 +88,24 @@ export function buildPrompt(room, name, profile) {
   ].filter(Boolean).join("\n");
 
   const window = room.messages.filter((m) => m.kind !== "summary").slice(-(profile.window || 40));
+  const others = (m) => m.sender.toLowerCase() !== name.toLowerCase();
+  const withImages = profile.vision && loadImage ? new Set(window.filter((m) => m.attachment && others(m)).slice(-INLINE_IMAGES).map((m) => m.id)) : new Set();
   const turns = [{ role: "system", content: system }];
+  const asParts = (c) => (Array.isArray(c) ? c : [{ type: "text", text: c }]);
   for (const m of window) {
     const mine = m.sender.toLowerCase() === name.toLowerCase();
     const role = mine ? "assistant" : "user";
     const text = messageText(m);
-    const content = mine ? text : m.kind === "system" ? `[room] ${text}` : `${m.sender} (${m.kind}): ${text}`;
+    let content = mine ? text : m.kind === "system" ? `[room] ${text}` : `${m.sender} (${m.kind}): ${text}`;
+    if (withImages.has(m.id) && role === "user") {
+      const uri = loadImage(room, m.attachment);
+      if (uri) content = [{ type: "text", text: content }, { type: "image_url", image_url: { url: uri } }];
+    }
     const last = turns.at(-1);
-    if (last.role === role && role !== "system") last.content += `\n\n${content}`;
-    else turns.push({ role, content });
+    if (last.role === role && role !== "system") {
+      if (typeof last.content === "string" && typeof content === "string") last.content += `\n\n${content}`;
+      else last.content = [...asParts(last.content), { type: "text", text: "\n\n" }, ...asParts(content)];
+    } else turns.push({ role, content });
   }
   if (turns.at(-1).role === "assistant") turns.push({ role: "user", content: "[room] (waiting for others)" });
   return turns;
@@ -234,7 +251,7 @@ export class ModelParticipant {
     this.busy = true;
     this.pendingAgain = false;
     try {
-      const turns = buildPrompt(room, this.name, this.profile);
+      const turns = buildPrompt(room, this.name, this.profile, { loadImage: this.hooks.loadImage });
       const { text, ms } = await this.client.complete(turns, { maxTokens: this.profile.maxTokens ?? 600, temperature: this.profile.temperature });
       this.latencies.push(ms);
       if (this.latencies.length > 200) this.latencies.shift();

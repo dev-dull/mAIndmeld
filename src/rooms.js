@@ -205,7 +205,8 @@ export function dropAttachment(room, id) {
 
 /** A message as plain text, for anything that cannot show an image: models, the summarizer, logs. */
 export function messageText(m) {
-  const image = m.attachment ? `[image: ${m.attachment.caption || "no caption"}]` : "";
+  const a = m.attachment;
+  const image = a ? `[image: ${a.caption || "no caption"}${a.caption_auto ? ` (described as: ${a.caption_auto})` : ""}]` : "";
   if (!image) return m.content;
   return m.content ? `${m.content}\n${image}` : image;
 }

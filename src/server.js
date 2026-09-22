@@ -20,7 +20,7 @@ import { KnowledgeStore, meetingIdFor } from "./kb.js";
 import { buildEnvelope, createAdapter, summarize, Breaker } from "./summarize.js";
 import { search as kbSearch, EmbeddingClient, EmbeddingStore, embeddingText } from "./search.js";
 import { runSweep, decideProposal, SweepStore } from "./sweep.js";
-import { sniffImage, imageDimensions, AttachmentFiles, Signer, newAttachmentId, ATTACHMENT_ID, SIGNED_URL_TTL_MS } from "./attachments.js";
+import { sniffImage, imageDimensions, stripMetadata, AttachmentFiles, Signer, newAttachmentId, ATTACHMENT_ID, SIGNED_URL_TTL_MS } from "./attachments.js";
 import { createCaptioner } from "./captions.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -433,6 +433,36 @@ export function createApp(config = loadConfig()) {
   }
 
   // ---- model participants ----
+
+  const MODEL_IMAGE_MAX_BYTES = 1024 * 1024;
+  const imageSkipsLogged = new Set();
+  /**
+   * The bytes of an attachment for a vision profile, as a data URI with
+   * metadata stripped, or null when the image is over the profile's limits
+   * (no resizing without a dependency, so it goes as caption only) or missing.
+   */
+  function loadImageFor(profile) {
+    return (room, attachment) => {
+      const record = room.attachments?.[attachment.id];
+      if (!record) return null;
+      const px = Math.max(record.width || 0, record.height || 0);
+      const key = `${room.code}/${attachment.id}`;
+      if (record.bytes > MODEL_IMAGE_MAX_BYTES || px > profile.imageMaxPx) {
+        if (!imageSkipsLogged.has(key)) {
+          imageSkipsLogged.add(key);
+          log(`image ${key} (${record.bytes} bytes, ${record.width ?? "?"}x${record.height ?? "?"}) is over the limit for vision profiles (${MODEL_IMAGE_MAX_BYTES} bytes, ${profile.imageMaxPx} px); models get its caption only`);
+        }
+        return null;
+      }
+      try {
+        const bytes = stripMetadata(fs.readFileSync(files.pathFor(room.code, attachment.id, record.ext)), record.type);
+        return `data:${record.type};base64,${bytes.toString("base64")}`;
+      } catch (error) {
+        log(`image ${key}: ${error.message}`);
+        return null;
+      }
+    };
+  }
 
   const modelHooks = {
     loadRoom: (code) => store.loadRoom(code),
@@ -997,7 +1027,7 @@ export function createApp(config = loadConfig()) {
         if (models.has(key) && !models.get(key).stopped) return { participant: models.get(key).status(), rejoined: true };
         const { participant } = await withRoom(code, (room) => rooms.joinRoom(room, { name, kind: "model", client: profileKey }));
         events.notify(code, { type: "participant", action: "joined", participant });
-        const mp = new ModelParticipant({ code, name, profileKey, profile, hooks: modelHooks }).start();
+        const mp = new ModelParticipant({ code, name, profileKey, profile, hooks: { ...modelHooks, loadImage: profile.vision ? loadImageFor(profile) : null } }).start();
         models.set(key, mp);
         log(`model ${name} (${profileKey}) joined ${code}`);
         mp.schedule();
