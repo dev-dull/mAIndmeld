@@ -185,6 +185,18 @@ export function orphanedAttachments(room, cutoffMs) {
   return Object.values(room.attachments || {}).filter((a) => a.message_id === null && Date.parse(a.uploaded_at) <= cutoffMs);
 }
 
+/** Record a generated caption on the ledger and, if already sent, on the message. */
+export function setAutoCaption(room, id, text) {
+  const ledger = room.attachments?.[id];
+  if (!ledger) return false;
+  ledger.caption_auto = text;
+  if (ledger.message_id !== null) {
+    const m = room.messages.find((x) => x.id === ledger.message_id);
+    if (m?.attachment) m.attachment.caption_auto = text;
+  }
+  return true;
+}
+
 export function dropAttachment(room, id) {
   if (!room.attachments || !room.attachments[id]) return false;
   delete room.attachments[id];
@@ -271,7 +283,9 @@ export function sendMessage(room, { sender, content, reply_to, attachment_id, ca
     if (!ledger) throw new RoomError(404, `no attachment ${id} in ${room.code}; upload it to this room first`);
     if (!sameName(ledger.uploaded_by, participant.name)) throw new RoomError(403, `attachment ${id} was uploaded by ${ledger.uploaded_by}, not ${participant.name}`);
     if (ledger.message_id !== null) throw new RoomError(409, `attachment ${id} is already on message #${ledger.message_id}`);
-    attachment = { id, type: ledger.type, bytes: ledger.bytes, caption: cleanText(caption, "caption", 500, false) || null };
+    const text = cleanText(caption, "caption", 500, true);
+    if (text.length < 3) throw new RoomError(400, "caption must say what the image shows, in at least 3 characters");
+    attachment = { id, type: ledger.type, bytes: ledger.bytes, caption: text, caption_auto: ledger.caption_auto || undefined };
   } else if (caption !== undefined && caption !== null && caption !== "") {
     throw new RoomError(400, "caption needs an attachment_id");
   }

@@ -156,7 +156,11 @@ human or by the creator.
 `system` (joins, leaves, motion events), or `summary`. Mentions are parsed
 from `@name` and drive `addressed_only` mode and the delivered-to bookkeeping.
 
-A message may carry one image: `attachment: { id, type, bytes, caption }`.
+A message may carry one image: `attachment: { id, type, bytes, caption,
+caption_auto? }`. The caption is required and comes from the sender; the
+automatic one, when `captions.profile` is configured, is a one-sentence
+description from a vision-capable endpoint, asked for in the background
+after upload and added to the ledger and the message when it arrives.
 The bytes live beside the room file at
 `rooms/<code>/attachments/<id>.<ext>`, and the room keeps a ledger,
 `room.attachments[id]`, recording type, size, dimensions, uploader, and the

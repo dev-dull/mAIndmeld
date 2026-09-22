@@ -152,8 +152,8 @@ function attachmentHtml(m) {
   const a = m.attachment;
   const code = location.pathname.split("/")[2];
   const src = `/api/rooms/${esc(code)}/attachments/${esc(a.id)}`;
-  const caption = esc(a.caption || "image");
-  return `<figure class="attachment"><a href="${src}" target="_blank" rel="noopener"><img src="${src}" alt="${caption}" loading="lazy"></a><figcaption>${caption}</figcaption></figure>`;
+  const alt = esc(a.caption || "image");
+  return `<figure class="attachment"><a href="${src}" target="_blank" rel="noopener"><img src="${src}" alt="${alt}" loading="lazy"></a><figcaption>${esc(captionText(a))}</figcaption></figure>`;
 }
 
 // The image waiting in the composer, if any. Uploaded on send, not before,
@@ -193,10 +193,19 @@ async function uploadPending(code) {
   return data.attachment;
 }
 
+// A later change to a message already on screen; today that is only an automatic caption arriving.
+function updateMessage(m) {
+  const el = document.querySelector(`[data-message-id="${m.id}"] figcaption`);
+  if (el && m.attachment) el.textContent = captionText(m.attachment);
+}
+
+const captionText = (a) => (a.caption_auto ? `${a.caption} · ${a.caption_auto}` : a.caption || "image");
+
 function renderMessage(m) {
   if (state.seen.has(m.id)) return;
   state.seen.add(m.id);
   const el = document.createElement("article");
+  el.dataset.messageId = m.id;
   if (m.kind === "system") {
     el.className = "msg system";
     el.innerHTML = `<div>${esc(m.content)}</div>`;
@@ -362,7 +371,11 @@ function initRoom() {
   })().catch((e) => toast(e.message));
 
   const es = new EventSource(`/api/rooms/${code}/events`);
-  es.addEventListener("message", (e) => renderMessage(JSON.parse(e.data).message));
+  es.addEventListener("message", (e) => {
+    const data = JSON.parse(e.data);
+    if (data.action === "updated") return updateMessage(data.message);
+    renderMessage(data.message);
+  });
   es.addEventListener("participant", () => loadRoom(code).catch(() => {}));
   es.addEventListener("room", () => loadRoom(code).catch(() => {}));
   es.addEventListener("motion", () => loadRoom(code).catch(() => {}));

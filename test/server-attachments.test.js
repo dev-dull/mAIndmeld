@@ -106,18 +106,23 @@ test("the room cap, wrong-room and non-sender references, reuse, and bad links a
   assert.equal(third.status, 413, "over max_room_attachment_bytes");
   assert.match(third.data.error, /exceed 200 bytes/);
 
-  const wrongRoom = await s.req("POST", `/api/rooms/${other}/messages`, { body: { sender: "builder", content: "x", attachment_id: a.id } });
+  const wrongRoom = await s.req("POST", `/api/rooms/${other}/messages`, { body: { sender: "builder", content: "x", attachment_id: a.id, caption: "elsewhere" } });
   assert.equal(wrongRoom.status, 404);
-  const notMine = await s.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "consumer", content: "x", attachment_id: a.id } });
+  const notMine = await s.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "consumer", content: "x", attachment_id: a.id, caption: "not mine" } });
   assert.equal(notMine.status, 403);
   assert.match(notMine.data.error, /uploaded by builder, not consumer/);
   const captionOnly = await s.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "builder", content: "x", caption: "no image" } });
   assert.equal(captionOnly.status, 400);
-  const first = await s.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "builder", content: "x", attachment_id: a.id } });
-  assert.equal(first.status, 201);
-  const again = await s.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "builder", content: "y", attachment_id: a.id } });
+  const uncaptioned = await s.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "builder", content: "x", attachment_id: a.id } });
+  assert.equal(uncaptioned.status, 400, "a caption is required with an image");
+  assert.match(uncaptioned.data.error, /caption is required/);
+  const tooShort = await s.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "builder", content: "x", attachment_id: a.id, caption: "ok" } });
+  assert.equal(tooShort.status, 400);
+  const first = await s.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "builder", content: "x", attachment_id: a.id, caption: "the first" } });
+  assert.equal(first.status, 201, JSON.stringify(first.data));
+  const again = await s.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "builder", content: "y", attachment_id: a.id, caption: "again" } });
   assert.equal(again.status, 409, "one message per attachment");
-  const unknown = await s.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "builder", content: "y", attachment_id: "0123456789abcdef" } });
+  const unknown = await s.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "builder", content: "y", attachment_id: "0123456789abcdef", caption: "nothing" } });
   assert.equal(unknown.status, 404);
 
   const url = first.data.message.attachment.url;
@@ -131,7 +136,7 @@ test("the room cap, wrong-room and non-sender references, reuse, and bad links a
 test("closing a room leaves its attachments in place; an older room file without the ledger still loads", async () => {
   const code = await room("Closing");
   const a = (await upload(code, PNG_1x1)).data.attachment;
-  await s.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "builder", content: "keep", attachment_id: a.id } });
+  await s.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "builder", content: "keep", attachment_id: a.id, caption: "kept image" } });
   const closed = await s.req("POST", `/api/rooms/${code}/close`, { body: { name: "Ana", kind: "human" } });
   // Direct close is a human power; join a human first if needed.
   if (closed.status !== 200) {
@@ -184,7 +189,7 @@ test("an upload never attached to a message is removed by the tick after the orp
     const res2 = await fetch(`${t.base}/api/rooms/${code}/attachments?name=builder`, { method: "POST", headers: { "content-type": "image/png", authorization: `Bearer ${t.token}` }, body: PNG_1x1 });
     const kept = (await res2.json()).attachment;
     assert.ok(orphan && kept, "both uploads succeeded");
-    assert.equal((await t.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "builder", content: "kept", attachment_id: kept.id } })).status, 201);
+    assert.equal((await t.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "builder", content: "kept", attachment_id: kept.id, caption: "the one we keep" } })).status, 201);
     await t.app.service.tick();
     assert.ok(fs.existsSync(path.join(t.dataDir, "rooms", code, "attachments", `${orphan.id}.png`)), "not before the window");
     await new Promise((r) => setTimeout(r, 1200));

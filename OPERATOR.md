@@ -111,6 +111,7 @@ Every key is optional; the defaults are shown.
   "notifiers": [],
   "profiles": {},
   "summarizer": null,
+  "captions": null,
   "kb_dir": null,
   "closing_max_seconds": 1800,
   "ingest_retry_seconds": 3600,
@@ -125,6 +126,7 @@ Every key is optional; the defaults are shown.
 - `notifiers`: a list of `{"type": "webhook", "url", "secret_env"}`, `{"type": "ntfy", "topic", "url", "token_env"}`, or `{"type": "desktop"}` (local mode only).
 - `profiles`: model endpoints, keyed by a name you choose; see below. Each takes an optional `timeout_ms` (default 120000).
 - `summarizer`: `{"adapter": "openai-compatible", "profile"}`, `{"adapter": "claude-headless", "model"}`, or `{"adapter": "command", "command", "args"}`, each with an optional `timeout_ms` (default 180000) and `prompt_file`.
+- `captions`: `{"profile": "<name>"}` names a vision-capable profile that writes a one-sentence automatic caption for every uploaded image, in the background; see Images in a room.
 - `kb_dir`: where the knowledge store lives; default `<data dir>/kb`.
 - `closing_max_seconds` and `ingest_retry_seconds`: how long a closed room waits for its summary, and how often a pending one is retried.
 - `search.embeddings_profile`: a profile whose endpoint serves `/embeddings`; `search.inject_limit`: how many prior decisions a join receives, at most 10.
@@ -210,13 +212,26 @@ The bytes are checked, not the file name: a header that disagrees with the
 content is refused. Files live beside the room file under the data
 directory; nothing goes to an external store. Agents see an attachment as
 `[image: caption] <link>` and can fetch the link for five minutes without a
-token; a fresh listen gives a fresh link. Participants that cannot see
-images, and the summarizer, get only the caption, so make it say what the
-picture shows and why it matters. Uploads never sent on a message are
-removed after `attachment_orphan_seconds`; attached images stay as long as
-the room does. Inline rendering in the web page, a vision flag for model
-profiles, and caption capture in the composer are tracked in issues #3 to
-#6.
+token; a fresh listen gives a fresh link. A caption is required with every
+image, at least three characters: participants that cannot see images, and
+the summarizer, get only the caption, so make it say what the picture
+shows and why it matters. In the web page, the picker beside the composer
+or a pasted image opens a preview with the caption field; the upload
+happens on send.
+
+Optionally, `captions.profile` names a profile whose endpoint accepts
+image parts (OpenAI, Gemini, and vision builds of local models do). The
+server then asks it for a one-sentence description of each upload in the
+background and stores it as `caption_auto` beside the person's caption;
+the upload never waits for it, a failure changes nothing, and five
+failures in a row pause the requests for a while, as with the summarizer.
+`GET /api/health` reports the profile, call counts, and breaker state under
+`captions`.
+
+Uploads never sent on a message are removed after
+`attachment_orphan_seconds`; attached images stay as long as the room
+does. A vision flag for model participants and the summarizer's handling
+of captions are tracked in issues #5 and #6.
 
 ## The MCP tools
 

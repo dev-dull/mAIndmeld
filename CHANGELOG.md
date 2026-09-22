@@ -18,6 +18,11 @@ follow [Semantic Versioning](https://semver.org/).
   or paste one in; a preview strip with a caption field; the upload happens
   on send, so a failure leaves the text and image in the composer; images
   render inline with the caption, and open full size in a new tab.
+- Captions (issue #4): a caption of at least three characters is required
+  with every image, since it is all that non-vision participants and the
+  summarizer see. `captions.profile` names a vision-capable profile that
+  adds a one-sentence automatic caption in the background, never blocking
+  the upload and never replacing the person's caption.
 
 ## [0.3.0] - 2026-09-21
 

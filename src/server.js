@@ -21,6 +21,7 @@ import { buildEnvelope, createAdapter, summarize, Breaker } from "./summarize.js
 import { search as kbSearch, EmbeddingClient, EmbeddingStore, embeddingText } from "./search.js";
 import { runSweep, decideProposal, SweepStore } from "./sweep.js";
 import { sniffImage, imageDimensions, AttachmentFiles, Signer, newAttachmentId, ATTACHMENT_ID, SIGNED_URL_TTL_MS } from "./attachments.js";
+import { createCaptioner } from "./captions.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const VERSION = JSON.parse(fs.readFileSync(path.join(here, "..", "package.json"), "utf8")).version;
@@ -81,6 +82,8 @@ export function createApp(config = loadConfig()) {
   const log = (line) => {
     if (!quiet) process.stdout.write(`${new Date().toISOString()} ${line}\n`);
   };
+  const captioner = createCaptioner(config, log);
+  let captionsInFlight = Promise.resolve(); // so stop() can wait for the last one
 
   // ---- helpers ----
 
@@ -617,7 +620,18 @@ export function createApp(config = loadConfig()) {
         return r;
       });
       attachmentRooms.add(code);
-      return { id, type: record.type, bytes: record.bytes, width: record.width, height: record.height, url: attachmentUrl(code, id), expires_in_seconds: SIGNED_URL_TTL_MS / 1000 };
+      if (captioner) {
+        // Background: the upload has returned by the time this resolves.
+        const job = captioner.caption(buffer, sniffed.type).then(async (text) => {
+          if (!text) return;
+          const { room, added } = await withRoom(code, (room) => ({ room, added: rooms.setAutoCaption(room, id, text) }));
+          if (!added) return;
+          const m = room.messages.find((x) => x.attachment?.id === id);
+          if (m) events.notify(code, { type: "message", action: "updated", message: withUrls(code, [m])[0] });
+        }).catch((error) => log(`caption ${code}/${id}: ${error.message}`));
+        captionsInFlight = captionsInFlight.then(() => job);
+      }
+      return { id, type: record.type, bytes: record.bytes, width: record.width, height: record.height, url: attachmentUrl(code, id), expires_in_seconds: SIGNED_URL_TTL_MS / 1000, auto_caption: Boolean(captioner) };
     },
 
     /** The ledger record and file path for serving. */
@@ -1069,6 +1083,7 @@ export function createApp(config = loadConfig()) {
       search: { ...service.kb.embeddings(), inject_limit: config.search.injectLimit },
       sweep: { ...service.sweep.state(), interval_days: config.sweep.intervalDays, running: sweepRunning, undecided: service.sweep.list().reduce((s, x) => s + x.undecided, 0) },
       notifiers: notifier.targets,
+      captions: captioner ? captioner.state() : null,
       clocks: { window_seconds: config.clocks.window_ms / 1000, hard_seconds: config.clocks.hard_ms / 1000 },
       mcp: { endpoint: `${config.publicOrigin}/mcp`, protocol_versions: mcp.tools ? ["2025-11-25", "2025-06-18", "2025-03-26"] : [] },
       public_origin: config.publicOrigin,
@@ -1385,6 +1400,7 @@ export function createApp(config = loadConfig()) {
     async stop() {
       clearInterval(this.timer);
       await ingestChain.catch(() => {});
+      await captionsInFlight.catch(() => {});
       for (const mp of models.values()) mp.stop();
       models.clear();
       for (const set of events.subscribers.values()) for (const res of set) res.end();

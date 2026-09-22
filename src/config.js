@@ -132,6 +132,13 @@ export function loadConfig(overrides = {}, env = process.env) {
       timeoutMs: intFrom(s.timeout_ms, 180_000, "summarizer.timeout_ms"),
     };
   }
+  let captions = null;
+  if (file.captions && typeof file.captions === "object" && file.captions.profile) {
+    const key = String(file.captions.profile);
+    if (!profiles[key]) throw new Error(`captions.profile names ${key}, which is not a configured profile`);
+    captions = { profile: key };
+  }
+
   const kbDir = path.resolve(file.kb_dir ? String(file.kb_dir) : path.join(dataDir, "kb"));
   const searchFile = file.search && typeof file.search === "object" ? file.search : {};
   const search = {
@@ -183,6 +190,7 @@ export function loadConfig(overrides = {}, env = process.env) {
     warnings,
     humanName: overrides.humanName || env.MAINDMELD_HUMAN_NAME || file.human_name || env.USER || env.USERNAME || "Human",
     sessionDays: intFrom(file.session_days, DEFAULTS.sessionDays, "session_days"),
+    captions,
     limits,
     loopback: isLoopback(bind),
   };
@@ -206,6 +214,7 @@ export function describeConfig(config) {
     sweep: { interval_days: config.sweep.intervalDays, model_pairs: config.sweep.modelPairs },
     closing_max_seconds: config.closingMaxSeconds,
     ingest_retry_seconds: config.ingestRetrySeconds,
+    captions: config.captions,
     summarizer: config.summarizer ? { adapter: config.summarizer.adapter, profile: config.summarizer.profile, command: config.summarizer.command, model: config.summarizer.model, timeout_ms: config.summarizer.timeoutMs, prompt_overridden: Boolean(config.summarizer.prompt) } : null,
     notifiers: (config.notifiers || []).map((n) => ({ type: n.type, url: n.url, topic: n.topic, secret_set: Boolean(n.secret), token_set: Boolean(n.token) })),
     profiles: Object.fromEntries(Object.entries(config.profiles || {}).map(([k, p]) => [k, {
