@@ -20,6 +20,7 @@ import { KnowledgeStore, meetingIdFor } from "./kb.js";
 import { buildEnvelope, createAdapter, summarize, Breaker } from "./summarize.js";
 import { search as kbSearch, EmbeddingClient, EmbeddingStore, embeddingText } from "./search.js";
 import { runSweep, decideProposal, SweepStore } from "./sweep.js";
+import { sniffImage, imageDimensions, AttachmentFiles, Signer, newAttachmentId, ATTACHMENT_ID, SIGNED_URL_TTL_MS } from "./attachments.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const VERSION = JSON.parse(fs.readFileSync(path.join(here, "..", "package.json"), "utf8")).version;
@@ -72,6 +73,9 @@ export function createApp(config = loadConfig()) {
   const limiter = new RateLimiter();
   const startedAt = Date.now();
   const queues = new Map(); // per-room promise chain, belt and braces (DESIGN.md 3.1)
+  const files = new AttachmentFiles(store.roomsDir);
+  const signer = new Signer();
+  const attachmentRooms = new Set(); // rooms with an upload not yet on a message, for the orphan sweep
   const models = new Map(); // `${code}:${name}` -> ModelParticipant
   const quiet = process.env.MAINDMELD_QUIET === "1";
   const log = (line) => {
@@ -103,6 +107,27 @@ export function createApp(config = loadConfig()) {
     }
     if (!parsed || typeof parsed !== "object") throw new HttpError(400, "request body must be a JSON object");
     return parsed;
+  }
+
+  /** Raw bytes with a hard cap; used for uploads, which are not JSON. */
+  async function readRaw(req, maxBytes) {
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > maxBytes) throw new HttpError(413, `attachment exceeds ${maxBytes} bytes`);
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  }
+
+  function attachmentUrl(code, id) {
+    return `${config.publicOrigin}/api/rooms/${code}/attachments/${id}?sig=${signer.sign(code, id)}`;
+  }
+
+  /** Copies of messages with a fetchable URL on each attachment. The URL is never stored. */
+  function withUrls(code, messages) {
+    return messages.map((m) => (m.attachment ? { ...m, attachment: { ...m.attachment, url: attachmentUrl(code, m.attachment.id) } } : m));
   }
 
   /** Load, mutate synchronously, save. Serialized per room. */
@@ -487,7 +512,7 @@ export function createApp(config = loadConfig()) {
 
     async get(code) {
       const room = loadOr404(code);
-      return { room, invitation: invitationText(room, config.publicOrigin) };
+      return { room: { ...room, messages: withUrls(code, room.messages) }, invitation: invitationText(room, config.publicOrigin) };
     },
 
     async list(name) {
@@ -512,7 +537,8 @@ export function createApp(config = loadConfig()) {
         events.notify(code, { type: "participant", action: "joined", participant: result.participant });
         if (result.room.others_joined > 0) abandonCandidates.delete(code);
       }
-      return { ...result, invitation: invitationText(result.room, config.publicOrigin), prior_decisions: await priorDecisions(result.room) };
+      const room = { ...result.room, messages: withUrls(code, result.room.messages) };
+      return { ...result, room, invitation: invitationText(room, config.publicOrigin), prior_decisions: await priorDecisions(result.room) };
     },
 
     /** What a called person needs to know, without the transcript. DESIGN.md 13. */
@@ -559,10 +585,50 @@ export function createApp(config = loadConfig()) {
     async send(principal, code, body) {
       limit(principal, "messages");
       const message = await withRoom(code, (room) =>
-        rooms.sendMessage(room, { sender: body.sender || principal.name, content: body.content, reply_to: body.reply_to }, config.limits.maxBodyBytes),
+        rooms.sendMessage(room, { sender: body.sender || principal.name, content: body.content, reply_to: body.reply_to, attachment_id: body.attachment_id, caption: body.caption }, config.limits.maxBodyBytes),
       );
       events.notify(code, { type: "message", message });
-      return message;
+      return withUrls(code, [message])[0];
+    },
+
+    /**
+     * Store an image for a later message. The bytes are checked structurally,
+     * capped per file and per room, and written inside the room's queue so
+     * the ledger in the room file and the file on disk never disagree.
+     */
+    async upload(principal, code, { buffer, contentType, name }) {
+      limit(principal, "messages");
+      if (!buffer.length) throw new HttpError(400, "upload the image bytes as the request body");
+      const sniffed = sniffImage(buffer);
+      if (!sniffed) throw new HttpError(415, "not a PNG, JPEG, WebP, or GIF image (checked by content, not by name)");
+      const declared = String(contentType || "").split(";")[0].trim().toLowerCase();
+      if (declared && declared !== "application/octet-stream" && declared !== sniffed.type) {
+        throw new HttpError(415, `Content-Type says ${declared} but the bytes are ${sniffed.type}`);
+      }
+      const dims = imageDimensions(buffer, sniffed.type);
+      const id = newAttachmentId();
+      const by = name || principal.name;
+      const record = await withRoom(code, (room) => {
+        if (rooms.attachmentBytes(room) + buffer.length > config.limits.maxRoomAttachmentBytes) {
+          throw new HttpError(413, `room ${code} would exceed ${config.limits.maxRoomAttachmentBytes} bytes of attachments`);
+        }
+        const r = rooms.registerAttachment(room, { id, type: sniffed.type, ext: sniffed.ext, bytes: buffer.length, width: dims?.width, height: dims?.height, by });
+        files.write(code, id, sniffed.ext, buffer);
+        return r;
+      });
+      attachmentRooms.add(code);
+      return { id, type: record.type, bytes: record.bytes, width: record.width, height: record.height, url: attachmentUrl(code, id), expires_in_seconds: SIGNED_URL_TTL_MS / 1000 };
+    },
+
+    /** The ledger record and file path for serving. */
+    attachment(code, id) {
+      if (!ATTACHMENT_ID.test(String(id))) throw new HttpError(404, `no attachment ${id}`);
+      const room = loadOr404(code);
+      const record = room.attachments?.[id];
+      if (!record) throw new HttpError(404, `no attachment ${id} in ${code}`);
+      const file = files.pathFor(code, id, record.ext);
+      if (!fs.existsSync(file)) throw new HttpError(404, `attachment ${id} is missing from disk`);
+      return { record, file };
     },
 
     /** Long-poll. With `name`, advances that participant's cursor. */
@@ -627,7 +693,7 @@ export function createApp(config = loadConfig()) {
         held: room.held,
         participants: room.participants.map(({ name: n, kind, last_seen_at }) => ({ name: n, kind, last_seen_at })),
         motions_open: rooms.openMotions(room).map((m) => rooms.motionView(m, participant?.name ?? null)),
-        messages,
+        messages: withUrls(code, messages),
         cursor,
         next,
       };
@@ -857,6 +923,26 @@ export function createApp(config = loadConfig()) {
           closingRooms.delete(code);
         }
       }
+      // Uploads nobody ever attached to a message are removed after the orphan window.
+      const orphanCutoff = Date.now() - config.limits.attachmentOrphanSeconds * 1000;
+      for (const code of [...attachmentRooms]) {
+        try {
+          const { result } = await withRoom(code, (room) => {
+            const gone = rooms.orphanedAttachments(room, orphanCutoff);
+            for (const a of gone) {
+              rooms.dropAttachment(room, a.id);
+              files.remove(code, a.id, a.ext);
+            }
+            const stillWaiting = Object.values(room.attachments || {}).some((a) => a.message_id === null);
+            return { result: { gone: gone.length, stillWaiting } };
+          });
+          if (result.gone) log(`room ${code}: removed ${result.gone} orphaned attachment(s)`);
+          if (!result.stillWaiting) attachmentRooms.delete(code);
+        } catch (error) {
+          log(`tick attachments ${code}: ${error.message}`);
+          attachmentRooms.delete(code);
+        }
+      }
       // Retry pending ingests once the retry interval has passed and the breaker allows.
       if (adapter && !breaker.isOpen()) {
         for (const code of [...pendingIngests]) {
@@ -964,6 +1050,8 @@ export function createApp(config = loadConfig()) {
         rooms_per_hour: config.limits.roomsPerHour,
         max_body_bytes: config.limits.maxBodyBytes,
         max_wait_seconds: config.limits.maxWaitSeconds,
+        max_attachment_bytes: config.limits.maxAttachmentBytes,
+        max_room_attachment_bytes: config.limits.maxRoomAttachmentBytes,
       },
       events: events.counts(),
       models: modelStatuses(),
@@ -1071,6 +1159,25 @@ export function createApp(config = loadConfig()) {
     }
 
     if (head !== "rooms") throw new HttpError(404, "not found");
+
+    // Attachment bytes: a valid signature stands in for a token, so an agent
+    // can hand the URL to a tool that cannot set headers. Nothing else does.
+    if (sub === "attachments" && id && req.method === "GET" && isRoomCode(code)) {
+      const sig = url.searchParams.get("sig");
+      if (!(sig && signer.verify(code, id, sig))) {
+        if (sig) throw new HttpError(403, "the attachment link has expired or is not valid; ask for a fresh one by listening again");
+        requireAuth(req);
+      }
+      const { record, file } = service.attachment(code, id);
+      res.writeHead(200, {
+        "content-type": record.type,
+        "content-length": record.bytes,
+        "content-disposition": `inline; filename="${id}.${record.ext}"`,
+        "cache-control": "private, max-age=300",
+      });
+      return fs.createReadStream(file).pipe(res);
+    }
+
     const principal = requireAuth(req);
     checkOrigin(req, principal);
 
@@ -1109,6 +1216,13 @@ export function createApp(config = loadConfig()) {
     if (sub === "brief" && req.method === "GET") return send(res, 200, await service.brief(code));
 
     if (req.method !== "POST") throw new HttpError(405, "method not allowed");
+
+    if (sub === "attachments" && !id) {
+      const buffer = await readRaw(req, config.limits.maxAttachmentBytes);
+      const result = await service.upload(principal, code, { buffer, contentType: req.headers["content-type"], name: url.searchParams.get("name") });
+      return send(res, 201, { attachment: result });
+    }
+
     const body = await readBody(req);
 
     if (sub === "motions" && id !== undefined) {
@@ -1245,6 +1359,7 @@ export function createApp(config = loadConfig()) {
         if (room.status !== "open") continue;
         if (rooms.openMotions(room).length) motionRooms.add(room.code);
         if (!isHumanCreator(room) && !room.others_joined && !room.human_present) abandonCandidates.add(room.code);
+        if (Object.values(room.attachments || {}).some((a) => a.message_id === null)) attachmentRooms.add(room.code);
       }
       if (adapter) log(`summarizer: ${adapter.name} (${adapter.model}); knowledge store at ${config.kbDir}`);
       else log("no summarizer configured; rooms close without a summary (set config.summarizer to enable)");

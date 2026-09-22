@@ -18,6 +18,9 @@ export const DEFAULTS = Object.freeze({
     roomsOpenPerCreator: 3,
     maxBodyBytes: 64 * 1024,
     maxWaitSeconds: 300,
+    maxAttachmentBytes: 2 * 1024 * 1024,
+    maxRoomAttachmentBytes: 20 * 1024 * 1024,
+    attachmentOrphanSeconds: 3600,
   }),
   abandonAfterSeconds: 900,
 });
@@ -66,6 +69,9 @@ export function loadConfig(overrides = {}, env = process.env) {
     roomsOpenPerCreator: intFrom(fileLimits.rooms_open_per_creator, DEFAULTS.limits.roomsOpenPerCreator, "rooms_open_per_creator"),
     maxBodyBytes: intFrom(fileLimits.max_body_bytes, DEFAULTS.limits.maxBodyBytes, "max_body_bytes"),
     maxWaitSeconds: intFrom(fileLimits.max_wait_seconds, DEFAULTS.limits.maxWaitSeconds, "max_wait_seconds"),
+    maxAttachmentBytes: intFrom(fileLimits.max_attachment_bytes, DEFAULTS.limits.maxAttachmentBytes, "max_attachment_bytes"),
+    maxRoomAttachmentBytes: intFrom(fileLimits.max_room_attachment_bytes, DEFAULTS.limits.maxRoomAttachmentBytes, "max_room_attachment_bytes"),
+    attachmentOrphanSeconds: intFrom(fileLimits.attachment_orphan_seconds, DEFAULTS.limits.attachmentOrphanSeconds, "attachment_orphan_seconds"),
   };
 
   // Origins the browser may send on a mutating request. In loopback mode the
@@ -221,6 +227,9 @@ export function describeConfig(config) {
       rooms_open_per_creator: config.limits.roomsOpenPerCreator,
       max_body_bytes: config.limits.maxBodyBytes,
       max_wait_seconds: config.limits.maxWaitSeconds,
+      max_attachment_bytes: config.limits.maxAttachmentBytes,
+      max_room_attachment_bytes: config.limits.maxRoomAttachmentBytes,
+      attachment_orphan_seconds: config.limits.attachmentOrphanSeconds,
     },
   };
 }

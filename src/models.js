@@ -1,6 +1,8 @@
 // Model participants: a server-driven loop that answers in a room on behalf
 // of an OpenAI-compatible endpoint. DESIGN.md 7.3 and 10.3.
 
+import { messageText } from "./rooms.js";
+
 const PASS = "[pass]";
 const DEBOUNCE_MS = 1500;
 
@@ -82,7 +84,8 @@ export function buildPrompt(room, name, profile) {
   for (const m of window) {
     const mine = m.sender.toLowerCase() === name.toLowerCase();
     const role = mine ? "assistant" : "user";
-    const content = mine ? m.content : m.kind === "system" ? `[room] ${m.content}` : `${m.sender} (${m.kind}): ${m.content}`;
+    const text = messageText(m);
+    const content = mine ? text : m.kind === "system" ? `[room] ${text}` : `${m.sender} (${m.kind}): ${text}`;
     const last = turns.at(-1);
     if (last.role === role && role !== "system") last.content += `\n\n${content}`;
     else turns.push({ role, content });
@@ -180,7 +183,7 @@ export class ModelParticipant {
     if (this.stopped) return;
     const room = this.hooks.loadRoom(this.code);
     if (!room) return;
-    const tail = room.messages.slice(-12).filter((m) => m.kind !== "system").map((m) => `${m.sender} (${m.kind}): ${m.content}`).join("\n");
+    const tail = room.messages.slice(-12).filter((m) => m.kind !== "system").map((m) => `${m.sender} (${m.kind}): ${messageText(m)}`).join("\n");
     const turns = [
       { role: "system", content: `You are ${this.name}, a participant in a meeting room. Answer with "yes" or "no" on the first line and one sentence of reasoning on the second line. Nothing else.` },
       { role: "user", content: `${motion.proposer} moved to call a human into the room. Reason: ${motion.reason}\n\nRecent discussion:\n${tail || "(none)"}\n\nShould a human be called? Vote yes if the decision is outside the participants' authority, if participants disagree after two rounds, if information only a person has is needed, or if an action is irreversible. Otherwise vote no.` },

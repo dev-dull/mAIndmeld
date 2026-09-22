@@ -145,6 +145,14 @@ function initLobby() {
 
 const state = { room: null, me: null, seen: new Set() };
 
+// Until the room page renders images inline (issue #3), an attachment shows as a link.
+function attachmentHtml(m) {
+  if (!m.attachment) return "";
+  const a = m.attachment;
+  const href = a.url || `/api/rooms/${esc(state.room?.code || "")}/attachments/${esc(a.id)}`;
+  return `<div class="attachment"><a href="${href}" target="_blank" rel="noopener">[image: ${esc(a.caption || "no caption")}]</a></div>`;
+}
+
 function renderMessage(m) {
   if (state.seen.has(m.id)) return;
   state.seen.add(m.id);
@@ -159,7 +167,7 @@ function renderMessage(m) {
     el.className = `msg ${m.kind}`;
     el.innerHTML = `<div class="avatar">${esc(m.sender.slice(0, 1).toUpperCase())}</div><div>
       <div class="head"><span class="name">${esc(m.sender)}</span><span class="badge ${m.kind}">${m.kind}</span><span class="time">${timeOf(m.created_at)}</span>${m.provisional ? '<span class="provisional">provisional</span>' : ""}</div>
-      <div class="body">${esc(m.content)}</div></div>`;
+      <div class="body">${esc(m.content)}${attachmentHtml(m)}</div></div>`;
   }
   const t = $("#transcript");
   const atBottom = t.scrollHeight - t.scrollTop - t.clientHeight < 40;

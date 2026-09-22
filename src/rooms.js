@@ -158,8 +158,44 @@ export function upgradeRoom(room) {
   room.others_joined ??= Math.max(0, room.participants.filter((p) => !sameName(p.name, room.created_by?.name ?? "")).length);
   room.ingest ??= room.status === "closed" ? { status: "skipped", attempts: 0, last_error: null, note_id: null, updated_at: room.closed_at, reason: "closed before ingest existed" } : null;
   room.ingest_enabled ??= false;
+  room.attachments ??= {}; // added with image attachments; older files simply have none
   room.format = 2;
   return room;
+}
+
+// ---------------------------------------------------------- attachments
+
+/** Record an uploaded image against the room. The bytes are the server's business; this is the ledger. */
+export function registerAttachment(room, { id, type, ext, bytes, width, height, by }, nowMs = Date.now()) {
+  if (room.status !== "open") throw new RoomError(409, `Room ${room.code} is ${room.status}`);
+  const participant = findParticipant(room, cleanName(by, "uploader"));
+  if (!participant) throw new RoomError(403, `${by} is not a participant in ${room.code}; join first`);
+  room.attachments ??= {};
+  const record = { id, type, ext, bytes, width: width ?? null, height: height ?? null, uploaded_by: participant.name, uploaded_at: iso(nowMs), message_id: null };
+  room.attachments[id] = record;
+  return record;
+}
+
+export function attachmentBytes(room) {
+  return Object.values(room.attachments || {}).reduce((sum, a) => sum + a.bytes, 0);
+}
+
+/** Uploads never attached to a message by the cutoff. */
+export function orphanedAttachments(room, cutoffMs) {
+  return Object.values(room.attachments || {}).filter((a) => a.message_id === null && Date.parse(a.uploaded_at) <= cutoffMs);
+}
+
+export function dropAttachment(room, id) {
+  if (!room.attachments || !room.attachments[id]) return false;
+  delete room.attachments[id];
+  return true;
+}
+
+/** A message as plain text, for anything that cannot show an image: models, the summarizer, logs. */
+export function messageText(m) {
+  const image = m.attachment ? `[image: ${m.attachment.caption || "no caption"}]` : "";
+  if (!image) return m.content;
+  return m.content ? `${m.content}\n${image}` : image;
 }
 
 export function joinRoom(room, { name, kind, client }, nowMs = Date.now()) {
@@ -223,11 +259,23 @@ function addressedSinceLastOwn(room, participant) {
   return room.messages.slice(start).some((m) => (m.mentions || []).some((n) => sameName(n, participant.name)));
 }
 
-export function sendMessage(room, { sender, content, reply_to }, maxBytes, nowMs = Date.now()) {
+export function sendMessage(room, { sender, content, reply_to, attachment_id, caption }, maxBytes, nowMs = Date.now()) {
   if (room.status !== "open") throw new RoomError(409, `Room ${room.code} is ${room.status}`);
   const participant = findParticipant(room, cleanName(sender, "sender"));
   if (!participant) throw new RoomError(403, `${sender} is not a participant in ${room.code}; join first`);
-  const text = cleanText(content, "content", Infinity, true);
+  let attachment = null;
+  let ledger = null;
+  if (attachment_id !== undefined && attachment_id !== null && attachment_id !== "") {
+    const id = String(attachment_id);
+    ledger = room.attachments?.[id] || null;
+    if (!ledger) throw new RoomError(404, `no attachment ${id} in ${room.code}; upload it to this room first`);
+    if (!sameName(ledger.uploaded_by, participant.name)) throw new RoomError(403, `attachment ${id} was uploaded by ${ledger.uploaded_by}, not ${participant.name}`);
+    if (ledger.message_id !== null) throw new RoomError(409, `attachment ${id} is already on message #${ledger.message_id}`);
+    attachment = { id, type: ledger.type, bytes: ledger.bytes, caption: cleanText(caption, "caption", 500, false) || null };
+  } else if (caption !== undefined && caption !== null && caption !== "") {
+    throw new RoomError(400, "caption needs an attachment_id");
+  }
+  const text = cleanText(content, "content", Infinity, !attachment);
   if (Buffer.byteLength(text, "utf8") > maxBytes) throw new RoomError(413, `content exceeds ${maxBytes} bytes`);
   if (participant.kind !== "human") {
     // DESIGN.md 6.5: enforced, not merely described.
@@ -251,7 +299,9 @@ export function sendMessage(room, { sender, content, reply_to }, maxBytes, nowMs
     reply_to: replyTo,
     mentions: parseMentions(room, text),
     provisional: room.human_required && !room.human_present ? true : undefined,
+    attachment: attachment || undefined,
   }, nowMs);
+  if (ledger) ledger.message_id = message.id;
   participant.last_seen_at = message.created_at;
   return message;
 }

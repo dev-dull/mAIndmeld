@@ -4,6 +4,7 @@
 // circuit breaker around whichever adapter is configured. DESIGN.md 10.
 
 import { spawn } from "node:child_process";
+import { messageText } from "./rooms.js";
 
 import { OpenAIChatClient } from "./models.js";
 import { CONFIDENCE, topicSlug } from "./kb.js";
@@ -57,13 +58,13 @@ export function redact(text) {
 
 export function buildEnvelope(room, kb, { maxDecisions = 40 } = {}) {
   const topics = kb.topics();
-  const transcriptText = room.messages.map((m) => m.content).join("\n").toLowerCase();
+  const transcriptText = room.messages.map(messageText).join("\n").toLowerCase();
   const matches = (t) => [t.name, ...(t.aliases || [])].some((w) => w && transcriptText.includes(String(w).toLowerCase().replace(/-/g, " ")) || transcriptText.includes(String(w).toLowerCase()));
   const hot = new Set(topics.filter(matches).map((t) => t.name));
   const active = kb.decisions().filter((d) => d.status === "active" && hot.has(d.topic)).slice(-maxDecisions);
   let redactions = 0;
   const messages = room.messages.map((m) => {
-    const r = redact(m.content);
+    const r = redact(messageText(m));
     redactions += r.count;
     return { id: m.id, kind: m.kind, sender: m.sender, content: r.text, created_at: m.created_at, provisional: m.provisional || undefined };
   });

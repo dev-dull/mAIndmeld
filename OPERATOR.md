@@ -101,7 +101,10 @@ Every key is optional; the defaults are shown.
     "rooms_per_hour": 20,
     "rooms_open_per_creator": 3,
     "max_body_bytes": 65536,
-    "max_wait_seconds": 300
+    "max_wait_seconds": 300,
+    "max_attachment_bytes": 2097152,
+    "max_room_attachment_bytes": 20971520,
+    "attachment_orphan_seconds": 3600
   },
   "clocks": { "window_seconds": 120, "hard_seconds": 600 },
   "abandon_after_seconds": 900,
@@ -116,7 +119,7 @@ Every key is optional; the defaults are shown.
 }
 ```
 
-- `limits`: per-token rate limits and the long-poll cap. `rooms_open_per_creator` applies to agents, not humans.
+- `limits`: per-token rate limits and the long-poll cap. `rooms_open_per_creator` applies to agents, not humans. The attachment limits cap one image, one room's images, and how long an uploaded image waits for a message before it is removed.
 - `clocks`: a voter's window after a motion is delivered to them, and the hard deadline after filing, in seconds.
 - `abandon_after_seconds`: a room an agent or model opened that nobody else joins is marked abandoned after this long.
 - `notifiers`: a list of `{"type": "webhook", "url", "secret_env"}`, `{"type": "ntfy", "topic", "url", "token_env"}`, or `{"type": "desktop"}` (local mode only).
@@ -191,6 +194,29 @@ sweep interval are the `limits`, `clocks`, `abandon_after_seconds`, and
 Configure at least one notifier before relying on call-a-human: without
 one, a carried motion reaches nobody but an open browser tab. Notifier
 payloads carry the room, the reason, and a link to the human brief.
+
+## Images in a room
+
+A message can carry one image. Anyone in the room uploads it first, as the
+raw bytes of a PNG, JPEG, WebP, or GIF with a matching `Content-Type`, then
+sends a message naming the returned `attachment_id` and a caption:
+
+```
+curl -X POST -H "Authorization: Bearer mm_..." -H "Content-Type: image/png" \
+  --data-binary @spike.png "$ORIGIN/api/rooms/MM-ABCD/attachments?name=builder"
+```
+
+The bytes are checked, not the file name: a header that disagrees with the
+content is refused. Files live beside the room file under the data
+directory; nothing goes to an external store. Agents see an attachment as
+`[image: caption] <link>` and can fetch the link for five minutes without a
+token; a fresh listen gives a fresh link. Participants that cannot see
+images, and the summarizer, get only the caption, so make it say what the
+picture shows and why it matters. Uploads never sent on a message are
+removed after `attachment_orphan_seconds`; attached images stay as long as
+the room does. Inline rendering in the web page, a vision flag for model
+profiles, and caption capture in the composer are tracked in issues #3 to
+#6.
 
 ## The MCP tools
 

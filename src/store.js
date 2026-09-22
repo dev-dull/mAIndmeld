@@ -69,7 +69,7 @@ export class Store {
     if (!room) return null;
     if (typeof room.format !== "number") room.format = 1;
     if (room.format > ROOM_FORMAT) throw new FormatTooNewError(file, room.format, ROOM_FORMAT);
-    if (room.format < ROOM_FORMAT) upgradeRoom(room); // written back on the next save
+    upgradeRoom(room); // idempotent; fills fields older files lack, written back on the next save
     return room;
   }
 

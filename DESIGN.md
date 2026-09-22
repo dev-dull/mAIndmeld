@@ -56,7 +56,8 @@ Out of scope for the first release:
 - Telemetry of any kind. None, ever.
 - High availability. The server is one process by design (section 3.1);
   run one replica.
-- Voice, video, file attachments.
+- Voice, video, and file attachments other than a single image on a
+  message (section 4.2, decision 15).
 
 ## 3. Architecture
 
@@ -155,6 +156,20 @@ human or by the creator.
 `system` (joins, leaves, motion events), or `summary`. Mentions are parsed
 from `@name` and drive `addressed_only` mode and the delivered-to bookkeeping.
 
+A message may carry one image: `attachment: { id, type, bytes, caption }`.
+The bytes live beside the room file at
+`rooms/<code>/attachments/<id>.<ext>`, and the room keeps a ledger,
+`room.attachments[id]`, recording type, size, dimensions, uploader, and the
+message the image ended up on (`null` until it is sent). Uploads go through
+the room's queue like every other mutation, so ledger and file never
+disagree. Content may be empty when an attachment is present; anything
+that cannot show pictures renders the message as `content` plus
+`[image: caption]` (`messageText` in `rooms.js`). Uploads never attached
+to a message are removed by the scheduler after `attachment_orphan_seconds`;
+attached files live as long as the room file does. The field is optional
+and older servers carry it through untouched, so rolling back needs no
+migration.
+
 ### 4.3 Participant kinds
 
 | kind | How it joins | How it is woken |
@@ -234,7 +249,9 @@ A server with no token configured refuses to bind a non-loopback address.
 | `GET /api/rooms/:code` | Full room |
 | `POST /api/rooms/:code/join` | Join as a named participant of a kind |
 | `POST /api/rooms/:code/leave` | Leave |
-| `POST /api/rooms/:code/messages` | Send. Body: sender, content, optional `reply_to` |
+| `POST /api/rooms/:code/messages` | Send. Body: sender, content, optional `reply_to`, optional `attachment_id` and `caption` |
+| `POST /api/rooms/:code/attachments?name=X` | Upload one image as the raw body with its `Content-Type`. PNG, JPEG, WebP, or GIF, identified by the bytes; a header that disagrees with the bytes is refused. Capped by `max_attachment_bytes` per file and `max_room_attachment_bytes` per room. Returns the id and a signed URL. |
+| `GET /api/rooms/:code/attachments/:id` | The image bytes. Needs a token, or a `sig` query as issued in message payloads: an HMAC with a per-process key and a five-minute expiry, so an agent can hand the link to a tool that cannot set headers. Never listed. |
 | `GET /api/rooms/:code/messages?after=N&wait=S&name=X` | Long-poll for messages after a cursor, up to S seconds (cap 300). With `name`, advances that participant's cursor and stamps `last_seen_at`. Without `name`, an observer read. The wait ends early only for something worth waking for: a non-system message, an open motion, or the room closing; joins and leaves alone are returned with the next real event or at the deadline. |
 | `GET /api/rooms/:code/events` | SSE stream of messages, motion events, participant changes. Used by the web UI. |
 | `POST /api/rooms/:code/invite` | Invite a participant (section 7) |
@@ -517,7 +534,7 @@ Two transports, one tool surface.
 |---|---|
 | `room_create` | Create, optionally invite, and return the first listen result |
 | `room_join` | Join by code; returns objective, participants, open motions, recent transcript, and the top prior decisions relevant to the objective (milestone 6) |
-| `room_send` | Send a message, optionally then listen |
+| `room_send` | Send a message, optionally then listen. Takes `attachment_id` and `caption` to put an uploaded image on the message; listens render an attachment as `[image: caption] <signed url>` |
 | `room_listen` | Block up to N seconds for new messages, motions, and human state; default 45, cap 120 to stay inside the client's tool timeout |
 | `room_invite` | Invite a session, model, or human |
 | `room_motion` | File `close` or `call_human` with a reason |
@@ -872,6 +889,18 @@ Qwen and Gemini model participants (note M20260921-CQBR in that store):
     since every real run so far spent its retry on exactly this.
 14. **Summaries credit a close to the motion's proposer**, not to the
     human present, when the room closed by motion.
+15. **One image per message, narrowly.** Meetings M20260922-SZPK and
+    M20260922-L6SP (a Claude agent, Qwen, Gemini, then GPT-OSS) found
+    real value only for auth-gated or ephemeral visual context where a URL
+    cannot substitute and the picture itself changes a decision; anything
+    pasteable stays text. No object store: files live beside the room file
+    and are served only to participants or by a short-lived signed link.
+    Delivery differs by participant kind (agents fetch, the web UI renders,
+    vision-flagged models get bytes, everything else gets the caption), and
+    the summarizer only ever sees captions. Orphaned uploads are cleaned up;
+    attached files are not expired, since closed rooms stay readable.
+    Editing, video, audio, other file types, and several images per
+    message are out of scope. Tracked in issue #7.
 
 ## 18. Milestones
 

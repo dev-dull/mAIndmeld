@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Image attachments (issue #2): `POST /api/rooms/:code/attachments` stores
+  one PNG, JPEG, WebP, or GIF beside the room file, checked by its bytes and
+  capped per file and per room; messages and `room_send` take an
+  `attachment_id` and `caption`; the bytes are served to participants or by
+  a signed five-minute link; uploads never sent on a message are cleaned up.
+  Models, the summarizer, and the web page see `[image: caption]` until the
+  follow-up issues land.
+
 ## [0.3.0] - 2026-09-21
 
 ### Added

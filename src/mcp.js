@@ -17,7 +17,8 @@ How to take part:
 - Ask for a human with room_motion type "call_human" when a decision is outside every participant's authority, when participants disagree after two rounds, when only a person has the information, or when an action is irreversible. A tie means a human is called. While a called human is absent, close is blocked and what you decide is marked provisional.
 - In "only when addressed" mode, speak only when named with @your-name.
 - Before proposing anything that sounds like a decision, call kb_search with its gist (the pre-flight check). If an active decision already covers it, cite the id instead of re-deciding, or say what has changed since. Joining a room also shows you the few decisions most relevant to its objective.
-- Be brief and specific. Address claims and evidence, not identities. Do not repeat what others just said.`;
+- Be brief and specific. Address claims and evidence, not identities. Do not repeat what others just said.
+- Images: a message can carry one image, shown to you as "[image: caption] <url>". Fetch the URL if the picture matters; it works for five minutes without a token, and a fresh listen gives a fresh link. To share one yourself, POST the bytes to /api/rooms/CODE/attachments with your bearer token and a Content-Type of image/png, image/jpeg, image/webp, or image/gif, then room_send with the returned attachment_id and a caption saying what it shows.`;
 
 const TOOLS = [
   {
@@ -58,13 +59,15 @@ const TOOLS = [
       type: "object",
       properties: {
         code: { type: "string" },
-        content: { type: "string", description: "Your message text." },
+        content: { type: "string", description: "Your message text. May be empty when attachment_id is set." },
         name: { type: "string" },
         reply_to: { type: "integer", description: "Id of the message you are replying to." },
+        attachment_id: { type: "string", description: "Id returned by POST /api/rooms/CODE/attachments, to put that image on this message." },
+        caption: { type: "string", description: "What the image shows and why it matters; participants that cannot see images get only this." },
         then_listen: { type: "boolean", description: "Wait for replies after sending. Default true." },
         wait: { type: "integer", description: "Seconds to wait for replies, default 45, maximum 120." },
       },
-      required: ["code", "content"],
+      required: ["code"],
       additionalProperties: false,
     },
   },
@@ -183,7 +186,7 @@ export function createMcp({ service, version, log }) {
     const a = args && typeof args === "object" ? args : {};
     const me = a.name || principal.name;
     // Clients do not always enforce `required`, so name the missing field.
-    const needs = { room_create: ["title"], room_join: ["code"], room_send: ["code", "content"], room_listen: ["code"], room_invite: ["code", "kind"], room_status: ["code"], room_leave: ["code"], room_motion: ["code", "type"], room_vote: ["code", "motion_id", "vote"], kb_search: ["query"] };
+    const needs = { room_create: ["title"], room_join: ["code"], room_send: ["code"], room_listen: ["code"], room_invite: ["code", "kind"], room_status: ["code"], room_leave: ["code"], room_motion: ["code", "type"], room_vote: ["code", "motion_id", "vote"], kb_search: ["query"] };
     for (const field of needs[name] || []) {
       if (a[field] === undefined || a[field] === null || a[field] === "") throw new Error(`${field} is required for ${name}`);
     }
@@ -239,7 +242,7 @@ export function createMcp({ service, version, log }) {
         return { text: [`Knowledge base search for "${a.query}":`, ...lines].join("\n"), data: { query: a.query, results } };
       }
       case "room_send": {
-        const message = await service.send(principal, a.code, { sender: me, content: a.content, reply_to: a.reply_to });
+        const message = await service.send(principal, a.code, { sender: me, content: a.content, reply_to: a.reply_to, attachment_id: a.attachment_id, caption: a.caption });
         if (a.then_listen === false) return { text: `Sent #${message.id}.\nnext: listen`, data: { message, next: "listen" } };
         const state = await service.listen(a.code, { name: me, wait: clampWait(a.wait) });
         return { text: `Sent #${message.id}.\n${formatListen(state)}`, data: { message, state } };
@@ -367,7 +370,8 @@ function clampWait(value) {
 
 function formatMessage(m) {
   const tag = m.kind === "system" ? "room" : `${m.sender} (${m.kind})`;
-  return `#${m.id} ${tag}: ${m.content}${m.provisional ? " [provisional]" : ""}`;
+  const image = m.attachment ? `${m.content ? "\n  " : ""}[image: ${m.attachment.caption || "no caption"}] ${m.attachment.url || m.attachment.id}` : "";
+  return `#${m.id} ${tag}: ${m.content}${image}${m.provisional ? " [provisional]" : ""}`;
 }
 
 function formatListen(s) {
