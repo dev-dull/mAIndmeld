@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-22
+
+### Changed
+- Lobby cards show a memo icon beside the status badge instead of the
+  note's id; the id stays in the tooltip.
+
 ## [0.4.2] - 2026-09-22
 
 ### Changed
@@ -106,7 +112,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Notifiers: webhook, ntfy, desktop.
 - Docker image, compose demo, CI, security policy.
 
-[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.3
 [0.4.2]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.2
 [0.4.1]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.1
 [0.4.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.0
