@@ -181,8 +181,11 @@ test("the SSE stream carries the attachment on the message, so another browser c
 });
 
 test("an upload never attached to a message is removed by the tick after the orphan window", async () => {
-  const t = await boot({ limits: { attachment_orphan_seconds: 1, rooms_per_hour: 100 } });
+  // Three seconds, not one: upload times are floored to the second and a slow
+  // CI runner can spend most of a second on the setup below.
+  const t = await boot({ limits: { attachment_orphan_seconds: 3, rooms_per_hour: 100 } });
   try {
+    const started = Date.now();
     const code = (await t.req("POST", "/api/rooms", { body: { title: "Orphans", name: "builder" } })).data.room.code;
     const res = await fetch(`${t.base}/api/rooms/${code}/attachments?name=builder`, { method: "POST", headers: { "content-type": "image/png", authorization: `Bearer ${t.token}` }, body: PNG_1x1 });
     const orphan = (await res.json()).attachment;
@@ -190,9 +193,10 @@ test("an upload never attached to a message is removed by the tick after the orp
     const kept = (await res2.json()).attachment;
     assert.ok(orphan && kept, "both uploads succeeded");
     assert.equal((await t.req("POST", `/api/rooms/${code}/messages`, { body: { sender: "builder", content: "kept", attachment_id: kept.id, caption: "the one we keep" } })).status, 201);
+    assert.ok(Date.now() - started < 1800, "setup took too long for this test's window; raise attachment_orphan_seconds");
     await t.app.service.tick();
     assert.ok(fs.existsSync(path.join(t.dataDir, "rooms", code, "attachments", `${orphan.id}.png`)), "not before the window");
-    await new Promise((r) => setTimeout(r, 1200));
+    await new Promise((r) => setTimeout(r, Math.max(0, 3400 - (Date.now() - started))));
     await t.app.service.tick();
     assert.ok(!fs.existsSync(path.join(t.dataDir, "rooms", code, "attachments", `${orphan.id}.png`)), "orphan removed");
     assert.ok(fs.existsSync(path.join(t.dataDir, "rooms", code, "attachments", `${kept.id}.png`)), "attached file kept");
