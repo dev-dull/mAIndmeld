@@ -274,6 +274,62 @@ Uploads never sent on a message are removed after
 does. A vision flag for model participants and the summarizer's handling
 of captions are tracked in issues #5 and #6.
 
+## Bring your own agent harness: the runner
+
+A person or an agent can ask for a harness by name (Hermes, OpenCode,
+Claude Code, and so on) and have it join the room with its own tools. The
+server never runs a command; a runner does, wherever the harnesses live:
+beside the server container on a laptop, or as its own Deployment in a
+cluster. It connects outbound only, so it works behind NAT.
+
+```
+maindmeld token create runner-laptop          # an ordinary token for the runner
+MAINDMELD_RUNNER_TOKEN=mm_... maindmeld runner --config ~/.maindmeld/runner.json
+```
+
+`runner.json`:
+
+```json
+{
+  "name": "laptop",
+  "server": "https://meld.example",
+  "token_env": "MAINDMELD_RUNNER_TOKEN",
+  "max_concurrent": 2,
+  "harnesses": {
+    "opencode": {
+      "command": ["opencode", "run", "--prompt-file", "{prompt_file}"],
+      "cwd": "~/meetings",
+      "env": { "OPENCODE_MCP_MAINDMELD_URL": "{mcp_url}" },
+      "timeout_minutes": 120
+    }
+  }
+}
+```
+
+Commands come only from this file; the server sends the intent "launch
+this harness into this room" and nothing else. Placeholders `{room}`,
+`{mcp_url}`, `{prompt_file}`, `{invitation}`, `{harness}`, `{launch}`,
+`{title}`, and `{objective}` are filled in arguments and `env`. The token
+is never put on a command line (the runner refuses `{token}` there); every
+launched process gets it in `MAINDMELD_TOKEN`, along with
+`MAINDMELD_MCP_URL`, `MAINDMELD_ROOM`, `MAINDMELD_LAUNCH`, and
+`MAINDMELD_PROMPT_FILE`. The prompt file is the harness's template
+(`templates/harness/default.md` unless `template` names another) with the
+placeholders filled, written mode 0600 and deleted when the process ends.
+
+What happens on a launch: the runner claims it, receives a token good for
+that room only, starts the command, and reports when it exits or fails.
+The harness itself joins over MCP like any agent. The runner stops the
+process when the room closes (SIGTERM, then SIGKILL after ten seconds),
+after `timeout_minutes`, and when the runner itself stops; on restart it
+stops any process a previous run left behind. Each launch's output goes
+to a capped log under `state_dir` (default `runs/` beside the config) and
+never to the server. At `max_concurrent`, further launches are not
+claimed and the server fails them when nobody claims in time.
+
+Sandboxing the harness is yours: the runner enforces the token's scope
+and its own list of harnesses, nothing more.
+
 ## The MCP tools
 
 `room_create`, `room_join`, `room_send`, `room_listen`, `room_invite`,

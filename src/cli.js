@@ -46,6 +46,8 @@ Knowledge store
 Administration
   token create NAME | list | revoke NAME
   config show                   effective configuration, secrets masked
+  runner [--config FILE]        start a runner that launches agent harnesses into rooms
+                                (default FILE: <data dir>/runner.json; token from its token_env)
 
 Environment: MAINDMELD_DATA_DIR, MAINDMELD_BIND, MAINDMELD_PORT,
 MAINDMELD_PUBLIC_ORIGIN, MAINDMELD_HUMAN_NAME, MAINDMELD_TOKEN
@@ -412,6 +414,19 @@ class Cli {
   async configShow() {
     this.io.out(JSON.stringify(describeConfig(this.config), null, 2));
   }
+
+  async runner(configFile) {
+    const { loadRunnerConfig, Runner } = await import("./runner.js");
+    const file = configFile || path.join(this.config.dataDir, "runner.json");
+    const config = loadRunnerConfig(file);
+    const runner = new Runner(config, { log: (line) => this.io.out(`${new Date().toISOString()} ${line}`) });
+    await runner.start();
+    this.io.out(`runner ${config.name}: ${Object.keys(config.harnesses).join(", ")}; state in ${config.stateDir}; Ctrl-C to stop`);
+    const shutdown = () => runner.stop().then(() => process.exit(0));
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+    await new Promise(() => {});
+  }
 }
 
 export async function run(argv = process.argv.slice(2)) {
@@ -447,6 +462,7 @@ export async function run(argv = process.argv.slice(2)) {
     sweep: () => cli.sweep(args[0], args[1], args[2], flags),
     token: () => cli.token(args[0], args[1]),
     config: () => (args[0] === "show" ? cli.configShow() : Promise.reject(new Error("usage: maindmeld config show"))),
+    runner: () => cli.runner(flags.config),
   };
   const fn = commands[command];
   if (!fn) {

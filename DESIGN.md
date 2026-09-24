@@ -496,8 +496,17 @@ into room R", and the facts it observes:
 
 Every transition is a system line in the transcript. The same harness
 requested twice while active returns the existing launch. Runners are
-ordinary tokens with a name; a scoped token cannot act as one. Windows and
-the token's lifetime are the `launch` config keys.
+ordinary tokens with a name; a scoped token cannot act as one, and only
+the token that registered a runner may claim or report its launches.
+Windows and the token's lifetime are the `launch` config keys.
+
+The runner (`maindmeld runner`, `src/runner.js`) is the other half: a
+process from this codebase that reads its own `runner.json`, subscribes to
+the server, claims launches for the harnesses it offers, fills a prompt
+template, spawns the command with the launch token in its environment,
+and reports the exit. It kills on cancel, on its own timeout, and on
+restart for processes a previous run left. Harness output stays in a
+capped local log; nothing flows through the server.
 
 ### 7.3 Model participants
 
