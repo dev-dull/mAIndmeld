@@ -201,7 +201,7 @@ the participant. The window creeps back by one message per successful
 reply, so it settles just under the limit. `GET /api/health` shows each
 participant's effective `window` next to `window_max`. If you know the
 limit, set `max_prompt_chars` on the profile and the first request already
-fits. A single message longer than 4,000 characters is cut in the model's
+fits; absent or 0 means no cap. A single message longer than 4,000 characters is cut in the model's
 view with a marker; the transcript keeps it whole.
 
 ### Images and model participants
