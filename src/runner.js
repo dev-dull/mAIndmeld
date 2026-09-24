@@ -53,9 +53,10 @@ export function fill(text, values) {
 }
 
 export class Runner {
-  constructor(config, { log = () => {}, fetchImpl = fetch, spawnImpl = spawn } = {}) {
+  constructor(config, { log = () => {}, fetchImpl = fetch, spawnImpl = spawn, killAfterMs = 10_000 } = {}) {
     this.config = config;
     this.log = log;
+    this.killAfterMs = killAfterMs; // SIGTERM first; SIGKILL this much later if the harness ignores it
     this.fetch = fetchImpl;
     this.spawn = spawnImpl;
     this.active = new Map(); // launch id -> { child, harness, timer, promptFile, logFd, cancelled }
@@ -233,14 +234,14 @@ export class Runner {
     } catch {
       // Already gone.
     }
-    const hard = setTimeout(() => {
+    e.hard = setTimeout(() => {
       try {
         e.child.kill("SIGKILL");
       } catch {
         // Already gone.
       }
-    }, 10_000);
-    hard.unref?.();
+    }, this.killAfterMs);
+    e.hard.unref?.();
   }
 
   async finish(id, state, reason, code = null) {
@@ -248,6 +249,7 @@ export class Runner {
     if (!e) return;
     this.active.delete(id);
     clearTimeout(e.timer);
+    clearTimeout(e.hard);
     this.cleanupFiles(id, e.promptFile, e.logFd);
     this.log(`launch ${id}: ${state}${reason ? ` (${reason})` : ""}${code !== null ? `, code ${code}` : ""}`);
     await this.report(id, state, reason, code);
@@ -306,6 +308,15 @@ export class Runner {
           try {
             process.kill(pid, "SIGTERM");
             this.log(`reaped pid ${pid} from a previous run (${n})`);
+            // Same escalation as cancel: a harness that ignores SIGTERM gets SIGKILL.
+            const hard = setTimeout(() => {
+              try {
+                process.kill(pid, "SIGKILL");
+              } catch {
+                // Gone in time.
+              }
+            }, this.killAfterMs);
+            hard.unref?.();
           } catch {
             // Not running any more.
           }

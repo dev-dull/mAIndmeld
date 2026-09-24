@@ -23,6 +23,7 @@ const prompt = require("fs").readFileSync(process.env.MAINDMELD_PROMPT_FILE, "ut
 })();
 `;
 const NEVER_EXITS = `setInterval(() => {}, 1000);`;
+const IGNORES_SIGTERM = `process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);`;
 
 function writeConfig(dir, s, harnesses, extra = {}) {
   const file = path.join(dir, "runner.json");
@@ -168,6 +169,46 @@ test("cancel on room close, a harness timeout, a bad command, and max_concurrent
     await runner.stop();
     assert.equal(runner.status().active.length, 0, "stop cancels what is running");
   } finally {
+    await runner?.stop();
+    await s.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a harness that ignores SIGTERM is killed anyway, on cancel and on reap", async () => {
+  const s = await boot({ limits: { rooms_per_hour: 100 } });
+  const dir = tmpDataDir();
+  let runner;
+  let second;
+  try {
+    const { token } = s.app.auth.createToken("runner-stubborn");
+    const file = writeConfig(dir, s, { stubborn: { command: [NODE, "-e", IGNORES_SIGTERM] } });
+    runner = new Runner(loadRunnerConfig(file, { TEST_RUNNER_TOKEN: token }), { log: () => {}, killAfterMs: 300 });
+    await runner.start();
+    assert.ok(await waitFor(() => runner.connected));
+    const mk = async (t) => (await s.req("POST", "/api/rooms", { body: { title: t, name: "host" } })).data.room.code;
+
+    const c1 = await mk("cancel");
+    await s.req("POST", `/api/rooms/${c1}/launches`, { body: { harness: "stubborn" } });
+    assert.ok(await waitFor(() => runner.status().active.length === 1));
+    const pid1 = runner.status().active[0].pid;
+    runner.cancel(runner.status().active[0].launch, "test");
+    await new Promise((r) => setTimeout(r, 150));
+    assert.doesNotThrow(() => process.kill(pid1, 0), "SIGTERM was ignored");
+    assert.ok(await waitFor(() => { try { process.kill(pid1, 0); return false; } catch { return true; } }, 3000), "SIGKILL got it");
+
+    const c2 = await mk("reap");
+    await s.req("POST", `/api/rooms/${c2}/launches`, { body: { harness: "stubborn" } });
+    assert.ok(await waitFor(() => runner.status().active.length === 1));
+    const pid2 = runner.status().active[0].pid;
+    runner.active.clear();
+    runner.stopped = true;
+    runner.controller.abort();
+    second = new Runner(loadRunnerConfig(file, { TEST_RUNNER_TOKEN: token }), { log: () => {}, killAfterMs: 300 });
+    await second.start();
+    assert.ok(await waitFor(() => { try { process.kill(pid2, 0); return false; } catch { return true; } }, 3000), "reap escalates to SIGKILL");
+  } finally {
+    await second?.stop();
     await runner?.stop();
     await s.close();
     fs.rmSync(dir, { recursive: true, force: true });
