@@ -133,6 +133,7 @@ Every key is optional; the defaults are shown.
 - `profiles`: model endpoints, keyed by a name you choose; see below. Each takes an optional `timeout_ms` (default 120000).
 - `summarizer`: `{"adapter": "openai-compatible", "profile"}`, `{"adapter": "claude-headless", "model"}`, or `{"adapter": "command", "command", "args"}`, each with an optional `timeout_ms` (default 180000) and `prompt_file`.
 - `captions`: `{"profile": "<name>"}` names a vision-capable profile that writes a one-sentence automatic caption for every uploaded image, in the background; see Images in a room.
+- `launch`: how long a harness launch waits: `join_timeout_seconds` (60) plus `join_grace_seconds` (10) for the harness to join after the runner claims it, `claim_timeout_seconds` (60) for a runner to claim before an offline runner fails it, `token_minutes` (15) for the launch token, and `runner_offline_seconds` (90) after a runner's last heartbeat. The runner itself is a later step of the same work.
 - `kb_dir`: where the knowledge store lives; default `<data dir>/kb`.
 - `closing_max_seconds` and `ingest_retry_seconds`: how long a closed room waits for its summary, and how often a pending one is retried.
 - `search.embeddings_profile`: a profile whose endpoint serves `/embeddings`; `search.inject_limit`: how many prior decisions a join receives, at most 10.

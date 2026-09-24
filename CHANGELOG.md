@@ -10,6 +10,13 @@ follow [Semantic Versioning](https://semver.org/).
 - Tokens may carry an expiry and a room scope; the server mints one per
   harness launch, refuses it outside its room, revokes it when the launch
   or the room ends, and sweeps expired records (#29, first step of #36).
+- Harness launches (#30): `POST /api/rooms/:code/launches` and
+  `room_invite kind: "harness"` ask a runner to start a harness into a
+  room; runners subscribe to `GET /api/runner/events`, claim launches for
+  a room-scoped token, and report how they ended; the room narrates
+  requested, started, joined, exited, failed, timed out, cancelled; the
+  scheduler times out launches that never join and cancels them when the
+  room closes; `GET /api/runners` and the health endpoint list runners.
 
 ### Fixed
 - A model participant that gets a 413, or a 400 naming a length or token

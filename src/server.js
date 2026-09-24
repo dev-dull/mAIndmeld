@@ -22,6 +22,7 @@ import { search as kbSearch, EmbeddingClient, EmbeddingStore, embeddingText } fr
 import { runSweep, decideProposal, SweepStore } from "./sweep.js";
 import { sniffImage, imageDimensions, stripMetadata, AttachmentFiles, Signer, newAttachmentId, ATTACHMENT_ID, SIGNED_URL_TTL_MS } from "./attachments.js";
 import { createCaptioner } from "./captions.js";
+import crypto from "node:crypto";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const VERSION = JSON.parse(fs.readFileSync(path.join(here, "..", "package.json"), "utf8")).version;
@@ -349,6 +350,144 @@ export function createApp(config = loadConfig()) {
       closingRooms.add(code);
       enqueueIngest(code);
     }
+    if (room.status !== "open") endLaunchesFor(code, "room closed").catch((e) => log(`launches ${code}: ${e.message}`));
+  }
+
+  // ---- runners and launches (DESIGN.md 7.4): the server holds intent and observed facts, nothing else ----
+
+  const runners = new Map(); // name -> { name, harnesses: Set, res: SSE response or null, last_seen_at, active: Set of launch ids }
+  const launchIndex = new Map(); // launch id -> room code
+  const launchRooms = new Set(); // rooms with an active launch, for the scheduler
+  const runnersFile = store.filePath("runners.json");
+  const launchTimeouts = () => ({ join_ms: config.launch.joinTimeoutSeconds * 1000, grace_ms: config.launch.joinGraceSeconds * 1000, claim_ms: config.launch.claimTimeoutSeconds * 1000 });
+
+  function saveRunners() {
+    try {
+      store.writeJSON(runnersFile, { format: 1, runners: [...runners.values()].map((r) => ({ name: r.name, harnesses: [...r.harnesses], last_seen_at: r.last_seen_at })) });
+    } catch (error) {
+      log(`runners.json: ${error.message}`);
+    }
+  }
+
+  function runnerOnline(name) {
+    const r = runners.get(name);
+    return Boolean(r && (r.res || Date.now() - Date.parse(r.last_seen_at) < config.launch.runnerOfflineSeconds * 1000));
+  }
+
+  function runnerView(r) {
+    return { name: r.name, harnesses: [...r.harnesses].sort(), online: runnerOnline(r.name), last_seen_at: r.last_seen_at, active: r.active.size };
+  }
+
+  /** The runner for a harness: the one asked for, else the online one offering it with the fewest active launches. */
+  function runnerFor(harness, preferred) {
+    const offering = [...runners.values()].filter((r) => r.harnesses.has(harness) && runnerOnline(r.name));
+    if (preferred) {
+      const r = offering.find((x) => x.name === preferred);
+      if (!r) throw new HttpError(409, runners.has(preferred) ? `runner ${preferred} is offline or does not offer ${harness}` : `no runner named ${preferred}`);
+      return r;
+    }
+    if (!offering.length) throw new HttpError(409, `no runner online offers ${harness}`);
+    return offering.sort((a, b) => a.active.size - b.active.size || a.name.localeCompare(b.name))[0];
+  }
+
+  function runnerSend(name, event, data) {
+    const r = runners.get(name);
+    if (!r?.res) return false;
+    events.write(r.res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    return true;
+  }
+
+  /** A runner's SSE stream: registers it, replays its pending launches, then delivers launch and cancel events. */
+  function runnerSubscribe(req, res, { name, harnesses }) {
+    const clean = rooms.cleanName(name, "runner name");
+    const set = new Set(String(harnesses || "").split(",").map((h) => h.trim()).filter(Boolean));
+    if (!set.size) throw new HttpError(400, "harnesses is required: the names this runner can launch, comma separated");
+    let r = runners.get(clean);
+    if (r?.res && r.res !== res) {
+      try { r.res.end(); } catch { /* replaced */ }
+    }
+    if (!r) {
+      r = { name: clean, harnesses: set, res: null, last_seen_at: rooms.now(), active: new Set() };
+      runners.set(clean, r);
+    }
+    r.harnesses = set;
+    r.res = res;
+    r.last_seen_at = rooms.now();
+    saveRunners();
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
+    res.write(`event: hello\ndata: ${JSON.stringify({ runner: clean, harnesses: [...set], heartbeat_seconds: 30 })}\n\n`);
+    // Replay what this runner has not claimed yet.
+    for (const code of launchRooms) {
+      const room = store.loadRoom(code);
+      if (!room) continue;
+      for (const l of rooms.activeLaunches(room)) {
+        if (l.state === "requested" && l.runner === clean) res.write(`event: launch\ndata: ${JSON.stringify(launchEventData(room, l))}\n\n`);
+      }
+    }
+    const beat = setInterval(() => {
+      r.last_seen_at = rooms.now();
+      events.write(res, ": heartbeat\n\n");
+    }, 30_000);
+    beat.unref();
+    req.on("close", () => {
+      clearInterval(beat);
+      if (r.res === res) {
+        r.res = null;
+        r.last_seen_at = rooms.now();
+        saveRunners();
+      }
+    });
+  }
+
+  const launchEventData = (room, l) => ({ launch: l.id, room: room.code, harness: l.harness, title: room.title, objective: room.objective, requested_by: l.requested_by });
+
+  /** Cancel every active launch of a room (it closed or was abandoned), revoke its tokens, and tell the runners. */
+  async function endLaunchesFor(code, reason) {
+    if (!launchRooms.has(code)) return;
+    const { result: ended } = await mutateAndPublish(code, (room) => {
+      const out = [];
+      for (const l of rooms.activeLaunches(room)) {
+        rooms.endLaunch(room, l.id, { state: "cancelled", reason });
+        out.push({ id: l.id, runner: l.runner });
+      }
+      return out;
+    });
+    auth.revokeScoped(code);
+    for (const l of ended) {
+      launchIndex.delete(l.id);
+      runners.get(l.runner)?.active.delete(l.id);
+      runnerSend(l.runner, "cancel", { launch: l.id, room: code, reason });
+    }
+    launchRooms.delete(code);
+    for (const l of ended) events.notify(code, { type: "launch", launch: { id: l.id, state: "cancelled" } });
+  }
+
+  /** Overdue launches: started without a join, or requested with the runner gone. Run by the scheduler. */
+  async function tickLaunches() {
+    for (const code of [...launchRooms]) {
+      try {
+        const { result } = await mutateAndPublish(code, (room) => {
+          const ended = [];
+          for (const { launch, state, reason } of rooms.overdueLaunches(room, Date.now(), runnerOnline, launchTimeouts())) {
+            rooms.endLaunch(room, launch.id, { state, reason });
+            ended.push({ id: launch.id, runner: launch.runner, state });
+          }
+          return { ended, remaining: rooms.activeLaunches(room).length };
+        });
+        for (const l of result.ended) {
+          auth.revokeScoped(code, { launch: l.id });
+          launchIndex.delete(l.id);
+          runners.get(l.runner)?.active.delete(l.id);
+          if (l.state === "timed_out") runnerSend(l.runner, "cancel", { launch: l.id, room: code, reason: "did not join in time" });
+          events.notify(code, { type: "launch", launch: { id: l.id, state: l.state } });
+          log(`launch ${l.id} in ${code}: ${l.state}`);
+        }
+        if (!result.remaining) launchRooms.delete(code);
+      } catch (error) {
+        log(`tick launches ${code}: ${error.message}`);
+        launchRooms.delete(code);
+      }
+    }
   }
 
   function afterMotion(code, motion, action, room) {
@@ -559,14 +698,22 @@ export function createApp(config = loadConfig()) {
     },
 
     async join(principal, code, body) {
+      const launchId = principal.scope?.launch || null;
       const result = await withRoom(code, (room) => {
+        if (launchId) {
+          // A launch token joining is the fact that turns "started" into "joined"; a late join past the grace is refused.
+          const l = room.launches?.[launchId];
+          if (l && !["started", "joined"].includes(l.state)) throw new HttpError(409, `launch ${launchId} is ${l.state}; the room no longer expects this harness`);
+        }
         const { participant, rejoined } = rooms.joinRoom(room, {
           name: body.name || principal.name,
           kind: body.kind || principalKind(principal),
-          client: body.client,
+          client: body.client || (launchId ? "runner" : undefined),
         });
-        return { participant, rejoined, room };
+        const launch = launchId ? rooms.launchJoined(room, launchId, participant.name) : null;
+        return { participant, rejoined, room, launch };
       });
+      if (result.launch) events.notify(code, { type: "launch", launch: rooms.launchView(result.launch) });
       if (!result.rejoined) {
         events.notify(code, { type: "participant", action: "joined", participant: result.participant });
         if (result.room.others_joined > 0) abandonCandidates.delete(code);
@@ -917,6 +1064,7 @@ export function createApp(config = loadConfig()) {
           if (result !== "keep") abandonCandidates.delete(code);
           if (result === "abandoned") {
             motionRooms.delete(code);
+            endLaunchesFor(code, "room abandoned").catch((e) => log(`launches ${code}: ${e.message}`));
             events.notify(code, { type: "room", room: rooms.summarizeRoom(room) });
             abandoned.push(code);
             log(`room ${code} abandoned: nobody joined ${room.created_by.name}`);
@@ -968,6 +1116,7 @@ export function createApp(config = loadConfig()) {
           closingRooms.delete(code);
         }
       }
+      await tickLaunches();
       // Expired tokens are dead already; drop the records.
       try {
         const gone = auth.sweepExpiredTokens();
@@ -1024,8 +1173,70 @@ export function createApp(config = loadConfig()) {
       return resolved;
     },
 
+    /** Ask a runner to start a harness into a room. Fails at once if no runner offers it. */
+    async launch(principal, code, body) {
+      const harness = String(body.harness ?? "").trim();
+      if (!harness) throw new HttpError(400, "harness is required");
+      const runner = runnerFor(harness, body.runner ? String(body.runner) : null);
+      const id = crypto.randomBytes(6).toString("hex");
+      const { result } = await mutateAndPublish(code, (room) => rooms.requestLaunch(room, { id, harness, runner: runner.name, requested_by: body.name || principal.name }));
+      const launch = result.launch;
+      if (!result.existing) {
+        launchIndex.set(launch.id, code);
+        launchRooms.add(code);
+        runner.active.add(launch.id);
+        const room = store.loadRoom(code);
+        runnerSend(runner.name, "launch", launchEventData(room, launch));
+        events.notify(code, { type: "launch", launch: rooms.launchView(launch) });
+        log(`launch ${launch.id} in ${code}: ${harness} requested on runner ${runner.name}`);
+      }
+      return { launch: rooms.launchView(launch), existing: result.existing };
+    },
+
+    /** The runner takes a launch: first claim wins and receives the room-scoped token, once. */
+    async claimLaunch(principal, id, body) {
+      const code = launchIndex.get(id);
+      if (!code) throw new HttpError(404, `no active launch ${id}`);
+      const runner = rooms.cleanName(body.runner || principal.name, "runner");
+      const tokenName = `launch-${id}`;
+      const { result: launch, room } = await mutateAndPublish(code, (room) => rooms.claimLaunch(room, id, { runner, token_name: tokenName }));
+      const minted = auth.createLaunchToken({ room: code, harness: launch.harness, launch: id, ttlMs: config.launch.tokenMinutes * 60_000 });
+      events.notify(code, { type: "launch", launch: rooms.launchView(launch) });
+      log(`launch ${id} in ${code}: claimed by runner ${runner}`);
+      return {
+        launch: rooms.launchView(launch),
+        room: { code, title: room.title, objective: room.objective },
+        invitation: invitationText(room, config.publicOrigin),
+        mcp_url: `${config.publicOrigin}/mcp`,
+        token: minted.token,
+        token_expires_at: minted.expires_at,
+        join_timeout_seconds: config.launch.joinTimeoutSeconds,
+      };
+    },
+
+    /** The runner reports how a launch ended. */
+    async launchStatus(principal, id, body) {
+      const code = launchIndex.get(id);
+      if (!code) throw new HttpError(404, `no active launch ${id}`);
+      const state = String(body.state ?? "");
+      if (state !== "exited" && state !== "failed") throw new HttpError(400, "state must be exited or failed");
+      const { result, room } = await mutateAndPublish(code, (room) => rooms.endLaunch(room, id, { state, reason: body.reason, exit_code: body.exit_code }));
+      auth.revokeScoped(code, { launch: id });
+      launchIndex.delete(id);
+      runners.get(result.launch.runner)?.active.delete(id);
+      if (!rooms.activeLaunches(room).length) launchRooms.delete(code);
+      events.notify(code, { type: "launch", launch: rooms.launchView(result.launch) });
+      log(`launch ${id} in ${code}: ${state}${body.reason ? ` (${body.reason})` : ""}`);
+      return { launch: rooms.launchView(result.launch) };
+    },
+
+    runners() {
+      return [...runners.values()].map(runnerView).sort((a, b) => a.name.localeCompare(b.name));
+    },
+
     async invite(principal, code, body) {
       const kind = String(body.kind ?? "session");
+      if (kind === "harness") return service.launch(principal, code, { harness: body.harness, runner: body.runner, name: body.name });
       if (kind === "model") {
         const profileKey = String(body.profile ?? "");
         const profile = config.profiles[profileKey];
@@ -1134,6 +1345,8 @@ export function createApp(config = loadConfig()) {
       sweep: { ...service.sweep.state(), interval_days: config.sweep.intervalDays, running: sweepRunning, undecided: service.sweep.list().reduce((s, x) => s + x.undecided, 0) },
       notifiers: notifier.targets,
       captions: captioner ? captioner.state() : null,
+      runners: service.runners(),
+      launches: { active_rooms: launchRooms.size, active: launchIndex.size },
       clocks: { window_seconds: config.clocks.window_ms / 1000, hard_seconds: config.clocks.hard_ms / 1000 },
       mcp: { endpoint: `${config.publicOrigin}/mcp`, protocol_versions: mcp.tools ? ["2025-11-25", "2025-06-18", "2025-03-26"] : [] },
       public_origin: config.publicOrigin,
@@ -1181,6 +1394,26 @@ export function createApp(config = loadConfig()) {
     if (head === "events" && req.method === "GET") {
       requireScope(requireAuth(req), null);
       return events.subscribe(null, res);
+    }
+
+    if (head === "runners" && req.method === "GET" && !code) {
+      requireScope(requireAuth(req), null);
+      return send(res, 200, { runners: service.runners() });
+    }
+
+    if (head === "runner" && code === "events" && req.method === "GET") {
+      requireScope(requireAuth(req), null);
+      return runnerSubscribe(req, res, { name: url.searchParams.get("name"), harnesses: url.searchParams.get("harnesses") });
+    }
+
+    if (head === "launches" && code && req.method === "POST") {
+      const principal = requireAuth(req);
+      checkOrigin(req, principal);
+      requireScope(principal, null);
+      const body = await readBody(req);
+      if (sub === "claim") return send(res, 200, await service.claimLaunch(principal, code, body));
+      if (sub === "status") return send(res, 200, await service.launchStatus(principal, code, body));
+      throw new HttpError(404, "not found");
     }
 
     if (head === "kb") {
@@ -1282,6 +1515,7 @@ export function createApp(config = loadConfig()) {
     }
 
     if (sub === "motions" && req.method === "GET") return send(res, 200, await service.motions(code));
+    if (sub === "launches" && req.method === "GET") return send(res, 200, { launches: (await service.status(code)).launches });
     if (sub === "brief" && req.method === "GET") return send(res, 200, await service.brief(code));
 
     if (req.method !== "POST") throw new HttpError(405, "method not allowed");
@@ -1304,6 +1538,8 @@ export function createApp(config = loadConfig()) {
     switch (sub) {
       case "motions":
         return send(res, 201, await service.motion(principal, code, body));
+      case "launches":
+        return send(res, 201, await service.launch(principal, code, body));
       case "wait":
         return send(res, 200, await service.wait(principal, code, body));
       case "hold":
@@ -1418,6 +1654,9 @@ export function createApp(config = loadConfig()) {
     start() {
       for (const w of config.warnings || []) log(`warning: ${w}`);
       bootstrapToken();
+      for (const r of store.readJSON(runnersFile, { runners: [] }).runners || []) {
+        runners.set(r.name, { name: r.name, harnesses: new Set(r.harnesses || []), res: null, last_seen_at: r.last_seen_at || rooms.now(), active: new Set() });
+      }
       for (const room of store.listRooms()) {
         if (room.status === "closing") {
           closingRooms.add(room.code);
@@ -1427,6 +1666,10 @@ export function createApp(config = loadConfig()) {
         if (room.status === "closed" && room.ingest?.status === "pending") pendingIngests.add(room.code);
         if (room.status !== "open") continue;
         if (rooms.openMotions(room).length) motionRooms.add(room.code);
+        for (const l of rooms.activeLaunches(room)) {
+          launchIndex.set(l.id, room.code);
+          launchRooms.add(room.code);
+        }
         if (!isHumanCreator(room) && !room.others_joined && !room.human_present) abandonCandidates.add(room.code);
         if (Object.values(room.attachments || {}).some((a) => a.message_id === null)) attachmentRooms.add(room.code);
       }
@@ -1459,6 +1702,7 @@ export function createApp(config = loadConfig()) {
       models.clear();
       for (const set of events.subscribers.values()) for (const res of set) res.end();
       for (const res of events.lobby) res.end();
+      for (const r of runners.values()) if (r.res) r.res.end();
       return new Promise((resolve) => server.close(() => resolve()));
     },
   };

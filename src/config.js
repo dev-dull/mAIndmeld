@@ -135,6 +135,15 @@ export function loadConfig(overrides = {}, env = process.env) {
       timeoutMs: intFrom(s.timeout_ms, 180_000, "summarizer.timeout_ms"),
     };
   }
+  const launchFile = file.launch && typeof file.launch === "object" ? file.launch : {};
+  const launch = {
+    joinTimeoutSeconds: intFrom(launchFile.join_timeout_seconds, 60, "launch.join_timeout_seconds"),
+    joinGraceSeconds: intFrom(launchFile.join_grace_seconds, 10, "launch.join_grace_seconds"),
+    claimTimeoutSeconds: intFrom(launchFile.claim_timeout_seconds, 60, "launch.claim_timeout_seconds"),
+    tokenMinutes: intFrom(launchFile.token_minutes, 15, "launch.token_minutes"),
+    runnerOfflineSeconds: intFrom(launchFile.runner_offline_seconds, 90, "launch.runner_offline_seconds"),
+  };
+
   let captions = null;
   if (file.captions && typeof file.captions === "object" && file.captions.profile) {
     const key = String(file.captions.profile);
@@ -194,6 +203,7 @@ export function loadConfig(overrides = {}, env = process.env) {
     humanName: overrides.humanName || env.MAINDMELD_HUMAN_NAME || file.human_name || env.USER || env.USERNAME || "Human",
     sessionDays: intFrom(file.session_days, DEFAULTS.sessionDays, "session_days"),
     captions,
+    launch,
     limits,
     loopback: isLoopback(bind),
   };
@@ -218,6 +228,7 @@ export function describeConfig(config) {
     closing_max_seconds: config.closingMaxSeconds,
     ingest_retry_seconds: config.ingestRetrySeconds,
     captions: config.captions,
+    launch: { join_timeout_seconds: config.launch.joinTimeoutSeconds, join_grace_seconds: config.launch.joinGraceSeconds, claim_timeout_seconds: config.launch.claimTimeoutSeconds, token_minutes: config.launch.tokenMinutes, runner_offline_seconds: config.launch.runnerOfflineSeconds },
     summarizer: config.summarizer ? { adapter: config.summarizer.adapter, profile: config.summarizer.profile, command: config.summarizer.command, model: config.summarizer.model, timeout_ms: config.summarizer.timeoutMs, prompt_overridden: Boolean(config.summarizer.prompt) } : null,
     notifiers: (config.notifiers || []).map((n) => ({ type: n.type, url: n.url, topic: n.topic, secret_set: Boolean(n.secret), token_set: Boolean(n.token) })),
     profiles: Object.fromEntries(Object.entries(config.profiles || {}).map(([k, p]) => [k, {

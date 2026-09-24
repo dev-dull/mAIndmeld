@@ -87,13 +87,15 @@ const TOOLS = [
   },
   {
     name: "room_invite",
-    description: "Invite another session (returns text you must deliver), a configured model profile (joins immediately), or a human (flags the room as needing a person).",
+    description: "Invite another session (returns text you must deliver), a configured model profile (joins immediately), a human (flags the room as needing a person), or a harness (a runner starts the named agent harness, which joins on its own).",
     inputSchema: {
       type: "object",
       properties: {
         code: { type: "string" },
-        kind: { type: "string", enum: ["session", "model", "human"] },
+        kind: { type: "string", enum: ["session", "model", "human", "harness"] },
         profile: { type: "string", description: "Model profile key when kind is model." },
+        harness: { type: "string", description: "Harness name when kind is harness, as an online runner offers it (see room_status or the health endpoint)." },
+        runner: { type: "string", description: "A specific runner to use when kind is harness; otherwise the least busy one that offers the harness." },
         name: { type: "string", description: "Display name for a model, or the invited session's name." },
         reason: { type: "string", description: "Why a human is needed, when kind is human." },
       },
@@ -258,8 +260,9 @@ export function createMcp({ service, version, log }) {
       }
       case "room_invite": {
         const kind = String(a.kind);
-        if (!["session", "model", "human"].includes(kind)) throw new Error(`kind must be session, model, or human, not ${kind}`);
-        const r = await service.invite(principal, a.code, { kind, profile: a.profile, name: a.name, reason: a.reason });
+        if (!["session", "model", "human", "harness"].includes(kind)) throw new Error(`kind must be session, model, human, or harness, not ${kind}`);
+        const r = await service.invite(principal, a.code, { kind, profile: a.profile, name: a.name, reason: a.reason, harness: a.harness, runner: a.runner });
+        if (kind === "harness") return { text: `${r.existing ? "Already requested" : "Requested"}: ${r.launch.harness} on runner ${r.launch.runner} (launch ${r.launch.id}, ${r.launch.state}). It joins on its own; listen for it.\nnext: listen`, data: r };
         if (kind === "session") return { text: `Deliver this to the other session yourself:\n${r.invitation}\nnext: listen`, data: r };
         if (kind === "model") return { text: `${r.rejoined ? "Already present" : "Joined"}: ${r.participant.name} (${r.participant.profile}).\nnext: listen`, data: r };
         return { text: "The room is now flagged as needing a human. Continue on what does not need them; close is blocked until they arrive or dismiss.\nnext: listen", data: r };
@@ -399,5 +402,6 @@ function formatStatus(s) {
     s.objective ? `Objective: ${s.objective}` : "",
     `Participants: ${s.participants.map((p) => `${p.name} (${p.kind})`).join(", ") || "none"}`,
     `Human required: ${s.human_required}; human present: ${s.human_present}; open motions: ${s.open_motions}`,
+    s.launches?.length ? `Launches: ${s.launches.map((l) => `${l.harness} ${l.state}${l.runner ? ` on ${l.runner}` : ""}`).join(", ")}` : "",
   ].filter(Boolean).join("\n");
 }

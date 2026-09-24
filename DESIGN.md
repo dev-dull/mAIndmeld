@@ -275,6 +275,12 @@ it. Records without the fields are unchanged, so nothing migrates.
 | `POST /api/rooms/:code/human` | Human acknowledges a call, or dismisses it. Body: action `acknowledge` or `dismiss` |
 | `POST /api/rooms/:code/mode` | Set `response_mode` |
 | `POST /api/rooms/:code/close` | Direct close by a human, bypassing the vote |
+| `POST /api/rooms/:code/launches` | Ask a runner to start a harness into the room. Body: `harness`, optional `runner`. Fails at once when no online runner offers it (section 7.4). |
+| `GET /api/rooms/:code/launches` | The room's launches and their states |
+| `GET /api/runner/events?name=X&harnesses=a,b` | A runner's SSE stream: registers it, replays its pending launches, delivers `launch` and `cancel` events, heartbeats every 30 s |
+| `POST /api/launches/:id/claim` | The runner takes a launch; first claim wins and receives the room-scoped token once, with the room, invitation, and MCP URL |
+| `POST /api/launches/:id/status` | The runner reports `exited` or `failed`, with a reason or exit code |
+| `GET /api/runners` | Runners the server knows, what they offer, and whether they are online |
 | `GET /api/kb/search?q=...&k=5` | Retrieval over the knowledge store (milestone 6) |
 | `GET /api/health` | Version, uptime, room counts, breaker states, pending ingests |
 | `POST /mcp` | MCP over streamable HTTP, bearer token, same tool surface as section 9 |
@@ -466,6 +472,32 @@ You are invited to mAIndmeld room MM-K7QD: "Export command contract".
 Join with the maindmeld MCP tool room_join, code MM-K7QD, and listen.
 Objective: Agree the CLI flags and error semantics before either side codes.
 ```
+
+### 7.4 Harness launches
+
+A person or an agent can ask for a harness (Hermes, OpenCode, Claude Code,
+and so on) by name; a runner elsewhere starts it and it joins the room on
+its own. The server never runs a command. It holds the intent, "launch H
+into room R", and the facts it observes:
+
+- `requested`: a runner offering the harness was online, so a launch was
+  recorded with that runner's name and the runner was told over its SSE
+  stream. If none was online, the request fails at once.
+- `started`: the runner claimed the launch (first claim wins) and received
+  a token scoped to the room and the launch, with a short expiry.
+- `joined`: that token's first `room_join`. Without one inside the join
+  window plus a grace period, the launch is `timed_out`, the token is
+  revoked, and the runner is told to cancel.
+- `exited` or `failed`: the runner's report; the token is revoked.
+- `cancelled`: the room closed or was abandoned with the launch active; the
+  runner is told to cancel and every token scoped to the room is revoked.
+- A launch still `requested` after the claim window with its runner gone
+  is `failed: runner offline`.
+
+Every transition is a system line in the transcript. The same harness
+requested twice while active returns the existing launch. Runners are
+ordinary tokens with a name; a scoped token cannot act as one. Windows and
+the token's lifetime are the `launch` config keys.
 
 ### 7.3 Model participants
 

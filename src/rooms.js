@@ -159,6 +159,7 @@ export function upgradeRoom(room) {
   room.ingest ??= room.status === "closed" ? { status: "skipped", attempts: 0, last_error: null, note_id: null, updated_at: room.closed_at, reason: "closed before ingest existed" } : null;
   room.ingest_enabled ??= false;
   room.attachments ??= {}; // added with image attachments; older files simply have none
+  room.launches ??= {}; // added with the runner; older files simply have none
   room.format = 2;
   return room;
 }
@@ -201,6 +202,101 @@ export function dropAttachment(room, id) {
   if (!room.attachments || !room.attachments[id]) return false;
   delete room.attachments[id];
   return true;
+}
+
+// ------------------------------------------------------------- launches
+// A launch is a request to start a harness into this room, carried out by
+// a runner somewhere else. The server records only intent and the facts it
+// observes: a claim, a join, a status report, a timeout. DESIGN.md 7.4.
+
+export const LAUNCH_STATES = Object.freeze(["requested", "started", "joined", "exited", "failed", "timed_out", "cancelled"]);
+export const LAUNCH_ACTIVE = new Set(["requested", "started", "joined"]);
+export const LAUNCH_JOIN_TIMEOUT_MS = 60_000;
+export const LAUNCH_JOIN_GRACE_MS = 10_000;
+export const LAUNCH_CLAIM_TIMEOUT_MS = 60_000;
+
+function launchEvent(launch, state, note, nowMs) {
+  launch.state = state;
+  launch.events.push({ at: iso(nowMs), state, note: note ?? null });
+}
+
+export function activeLaunches(room) {
+  return Object.values(room.launches || {}).filter((l) => LAUNCH_ACTIVE.has(l.state));
+}
+
+export function requestLaunch(room, { id, harness, runner, requested_by }, nowMs = Date.now()) {
+  if (room.status !== "open") throw new RoomError(409, `Room ${room.code} is ${room.status}`);
+  const name = cleanText(harness, "harness", 40, true);
+  if (!/^[A-Za-z0-9_.-]+$/.test(name)) throw new RoomError(400, "harness must be letters, digits, dot, dash, or underscore");
+  room.launches ??= {};
+  const existing = activeLaunches(room).find((l) => l.harness === name);
+  if (existing) return { launch: existing, existing: true };
+  const launch = { id, harness: name, runner, requested_by, requested_at: iso(nowMs), claimed_at: null, joined_at: null, ended_at: null, participant: null, token_name: null, reason: null, exit_code: null, state: "requested", events: [] };
+  launchEvent(launch, "requested", `by ${requested_by}`, nowMs);
+  room.launches[id] = launch;
+  addSystemMessage(room, `${name} requested by ${requested_by}${runner ? ` on runner ${runner}` : ""}.`, { action: "launch", launch: id, state: "requested", harness: name }, nowMs);
+  return { launch, existing: false };
+}
+
+/** The runner has the launch. First claim wins; a second one is a conflict. */
+export function claimLaunch(room, id, { runner, token_name }, nowMs = Date.now()) {
+  const launch = room.launches?.[id];
+  if (!launch) throw new RoomError(404, `no launch ${id} in ${room.code}`);
+  if (launch.state !== "requested") throw new RoomError(409, `launch ${id} is ${launch.state}, not requested`);
+  if (launch.runner && launch.runner !== runner) throw new RoomError(409, `launch ${id} is for runner ${launch.runner}, not ${runner}`);
+  launch.runner = runner;
+  launch.token_name = token_name;
+  launch.claimed_at = iso(nowMs);
+  launchEvent(launch, "started", `on runner ${runner}`, nowMs);
+  addSystemMessage(room, `${launch.harness} starting on runner ${runner}.`, { action: "launch", launch: id, state: "started", harness: launch.harness }, nowMs);
+  return launch;
+}
+
+/** The launch token's first join. A late join inside the grace window still counts. */
+export function launchJoined(room, id, participantName, nowMs = Date.now()) {
+  const launch = room.launches?.[id];
+  if (!launch) return null;
+  if (launch.state === "joined") return launch;
+  if (launch.state !== "started") throw new RoomError(409, `launch ${id} is ${launch.state}; it cannot join now`);
+  launch.participant = participantName;
+  launch.joined_at = iso(nowMs);
+  launchEvent(launch, "joined", `as ${participantName}`, nowMs);
+  addSystemMessage(room, `${launch.harness} joined as ${participantName}.`, { action: "launch", launch: id, state: "joined", harness: launch.harness }, nowMs);
+  return launch;
+}
+
+/** A terminal state: exited or failed from the runner; timed_out or cancelled from the server. */
+export function endLaunch(room, id, { state, reason = null, exit_code = null }, nowMs = Date.now()) {
+  const launch = room.launches?.[id];
+  if (!launch) throw new RoomError(404, `no launch ${id} in ${room.code}`);
+  if (!["exited", "failed", "timed_out", "cancelled"].includes(state)) throw new RoomError(400, `state must be exited, failed, timed_out, or cancelled, not ${state}`);
+  if (!LAUNCH_ACTIVE.has(launch.state)) return { launch, changed: false };
+  launch.reason = reason ? String(reason).slice(0, 300) : null;
+  launch.exit_code = exit_code === null || exit_code === undefined ? null : Number(exit_code);
+  launch.ended_at = iso(nowMs);
+  launchEvent(launch, state, reason, nowMs);
+  const text = state === "exited" ? `${launch.harness} exited${launch.exit_code !== null ? ` (code ${launch.exit_code})` : ""}.`
+    : state === "failed" ? `${launch.harness} failed${launch.reason ? `: ${launch.reason}` : ""}.`
+    : state === "timed_out" ? `${launch.harness} did not join in time.`
+    : `${launch.harness} cancelled${launch.reason ? `: ${launch.reason}` : ""}.`;
+  addSystemMessage(room, text, { action: "launch", launch: id, state, harness: launch.harness }, nowMs);
+  return { launch, changed: true };
+}
+
+/** Launches the scheduler should end: started too long without a join, or requested too long without a claim. */
+export function overdueLaunches(room, nowMs = Date.now(), runnerOnline = () => true, timeouts = {}) {
+  const join = (timeouts.join_ms ?? LAUNCH_JOIN_TIMEOUT_MS) + (timeouts.grace_ms ?? LAUNCH_JOIN_GRACE_MS);
+  const claim = timeouts.claim_ms ?? LAUNCH_CLAIM_TIMEOUT_MS;
+  const out = [];
+  for (const l of activeLaunches(room)) {
+    if (l.state === "started" && nowMs - Date.parse(l.claimed_at) > join) out.push({ launch: l, state: "timed_out" });
+    else if (l.state === "requested" && nowMs - Date.parse(l.requested_at) > claim && !runnerOnline(l.runner)) out.push({ launch: l, state: "failed", reason: "runner offline" });
+  }
+  return out;
+}
+
+export function launchView(l) {
+  return { id: l.id, harness: l.harness, runner: l.runner, state: l.state, requested_by: l.requested_by, requested_at: l.requested_at, claimed_at: l.claimed_at, joined_at: l.joined_at, ended_at: l.ended_at, participant: l.participant, reason: l.reason, exit_code: l.exit_code };
 }
 
 /** A message as plain text, for anything that cannot show an image: models, the summarizer, logs. */
@@ -635,5 +731,6 @@ export function summarizeRoom(room) {
     participants: room.participants.map(({ name, kind, client, last_seen_at }) => ({ name, kind, client, last_seen_at })),
     message_count: room.messages.length,
     open_motions: openMotions(room).length,
+    launches: Object.values(room.launches || {}).map(launchView),
   };
 }
