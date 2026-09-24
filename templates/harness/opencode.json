@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "maindmeld": {
+      "type": "remote",
+      "url": "{env:MAINDMELD_MCP_URL}",
+      "headers": { "Authorization": "Bearer {env:MAINDMELD_TOKEN}" },
+      "enabled": true
+    }
+  }
+}

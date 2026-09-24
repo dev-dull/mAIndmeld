@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "maindmeld": {
+      "type": "http",
+      "url": "${MAINDMELD_MCP_URL}",
+      "headers": { "Authorization": "Bearer ${MAINDMELD_TOKEN}" }
+    }
+  }
+}

@@ -12,7 +12,8 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TEMPLATE = path.join(here, "..", "templates", "harness", "default.md");
 const LOG_CAP_BYTES = 1024 * 1024;
-const PLACEHOLDERS = ["token", "mcp_url", "room", "prompt_file", "invitation", "harness", "launch", "title", "objective"];
+const PLACEHOLDERS = ["token", "mcp_url", "room", "prompt_file", "prompt", "invitation", "harness", "launch", "title", "objective", "templates"];
+export const TEMPLATES_DIR = path.join(here, "..", "templates", "harness");
 
 const expand = (p) => (p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p);
 
@@ -36,7 +37,8 @@ export function loadRunnerConfig(file, env = process.env) {
     harnesses[key] = {
       command: h.command.map(String),
       cwd: h.cwd ? expand(String(h.cwd)) : undefined,
-      env: h.env && typeof h.env === "object" ? Object.fromEntries(Object.entries(h.env).map(([k, v]) => [k, String(v)])) : {},
+      // A null value removes an inherited variable (Claude Code, for one, refuses to start inside another Claude Code).
+      env: h.env && typeof h.env === "object" ? Object.fromEntries(Object.entries(h.env).map(([k, v]) => [k, v === null ? null : String(v)])) : {},
       timeoutMs: Math.round(Number(h.timeout_minutes ?? 120) * 60_000),
       template: h.template ? expand(String(h.template)) : DEFAULT_TEMPLATE,
     };
@@ -159,11 +161,13 @@ export class Runner {
     if (claim.status === 409) return this.log(`launch ${data.launch}: already claimed`);
     if (claim.status !== 200) return this.log(`launch ${data.launch}: claim failed with ${claim.status}: ${claim.data.error || ""}`);
     const c = claim.data;
-    const values = { token: c.token, mcp_url: c.mcp_url, room: c.room.code, invitation: c.invitation, harness: data.harness, launch: data.launch, title: c.room.title, objective: c.room.objective || "" };
+    const values = { token: c.token, mcp_url: c.mcp_url, room: c.room.code, invitation: c.invitation, harness: data.harness, launch: data.launch, title: c.room.title, objective: c.room.objective || "", templates: TEMPLATES_DIR };
     const promptFile = path.join(this.config.stateDir, `${data.launch}.prompt.md`);
     values.prompt_file = promptFile;
     try {
-      fs.writeFileSync(promptFile, fill(fs.readFileSync(harness.template, "utf8"), values), { mode: 0o600 });
+      // The prompt never contains the token: templates cannot use {token}, only the environment variable's name.
+      values.prompt = fill(fs.readFileSync(harness.template, "utf8"), { ...values, token: "{token}" });
+      fs.writeFileSync(promptFile, values.prompt, { mode: 0o600 });
     } catch (error) {
       await this.report(data.launch, "failed", `could not write the prompt file: ${error.message}`);
       return;
@@ -175,8 +179,11 @@ export class Runner {
       MAINDMELD_ROOM: c.room.code,
       MAINDMELD_LAUNCH: data.launch,
       MAINDMELD_PROMPT_FILE: promptFile,
-      ...Object.fromEntries(Object.entries(harness.env).map(([k, v]) => [k, fill(v, values)])),
     };
+    for (const [k, v] of Object.entries(harness.env)) {
+      if (v === null) delete env[k];
+      else env[k] = fill(v, values);
+    }
     const [program, ...args] = harness.command.map((a) => fill(a, values));
     const logFile = path.join(this.config.stateDir, `${data.launch}.log`);
     let logFd = null;

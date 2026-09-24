@@ -22,6 +22,11 @@ follow [Semantic Versioning](https://semver.org/).
   template, starts the command with a room-scoped token in its
   environment, caps its log locally, kills it on cancel or timeout, and
   reaps leftovers on restart. Commands come only from the runner's file.
+- Harness templates (#32): `templates/harness/` holds MCP configurations,
+  a prompt template, and `runner.json` entries for Claude Code, OpenCode,
+  Gemini CLI, Codex, Hermes, and Pi, with a table of which are verified;
+  Claude Code is, from a real launch. Placeholders `{prompt}` and
+  `{templates}`; a `null` in a harness's `env` removes a variable.
 
 ### Fixed
 - A model participant that gets a 413, or a 400 naming a length or token

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "maindmeld": {
+      "httpUrl": "$MAINDMELD_MCP_URL",
+      "headers": { "Authorization": "Bearer $MAINDMELD_TOKEN" }
+    }
+  }
+}

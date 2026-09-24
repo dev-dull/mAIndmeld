@@ -1,0 +1,4 @@
+# Codex CLI: `codex exec` reads this when CODEX_HOME points at the directory that holds it.
+[mcp_servers.maindmeld]
+url = "${MAINDMELD_MCP_URL}"
+bearer_token_env_var = "MAINDMELD_TOKEN"

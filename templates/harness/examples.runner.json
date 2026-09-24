@@ -1,0 +1,36 @@
+{
+  "name": "laptop",
+  "server": "http://127.0.0.1:7340",
+  "token_env": "MAINDMELD_RUNNER_TOKEN",
+  "max_concurrent": 2,
+  "harnesses": {
+    "claude-code": {
+      "command": ["claude", "-p", "{prompt}", "--mcp-config", "{templates}/claude-code.mcp.json", "--strict-mcp-config", "--allowedTools", "mcp__maindmeld__*", "--max-turns", "60"],
+      "env": { "CLAUDECODE": null, "CLAUDE_CODE_ENTRYPOINT": null },
+      "timeout_minutes": 120
+    },
+    "opencode": {
+      "command": ["opencode", "run", "{prompt}"],
+      "env": { "OPENCODE_CONFIG": "{templates}/opencode.json" },
+      "timeout_minutes": 120
+    },
+    "gemini-cli": {
+      "command": ["gemini", "-p", "{prompt}", "--allowed-mcp-server-names", "maindmeld"],
+      "env": { "GEMINI_CLI_SYSTEM_SETTINGS_PATH": "{templates}/gemini-settings.json" },
+      "timeout_minutes": 120
+    },
+    "codex": {
+      "command": ["codex", "exec", "--skip-git-repo-check", "{prompt}"],
+      "env": { "CODEX_HOME": "{templates}/codex-home" },
+      "timeout_minutes": 120
+    },
+    "hermes": {
+      "command": ["hermes", "chat", "-q", "{prompt}"],
+      "timeout_minutes": 120
+    },
+    "pi": {
+      "command": ["pi", "-p", "{prompt}"],
+      "timeout_minutes": 120
+    }
+  }
+}

@@ -118,7 +118,7 @@ test("the happy path: request, runner event, claim with a scoped token, join, ex
     const lines = await sysLines(s, code);
     assert.ok(lines.some((l) => l === "hermes requested by test on runner laptop."));
     assert.ok(lines.some((l) => l === "hermes starting on runner laptop."));
-    assert.ok(lines.some((l) => l === "hermes joined as Hermes."));
+    assert.ok(lines.some((l) => l === "Hermes joined as agent."), "the ordinary join line stands; no duplicate launch line when the names match");
     assert.ok(lines.some((l) => l === "hermes exited (code 0)."));
     assert.equal((await s.req("GET", "/api/health", { token: null })).data.launches.active, 0);
     runner.disconnect();

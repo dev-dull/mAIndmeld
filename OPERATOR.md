@@ -330,6 +330,14 @@ claimed and the server fails them when nobody claims in time.
 Sandboxing the harness is yours: the runner enforces the token's scope
 and its own list of harnesses, nothing more.
 
+Ready-made entries, MCP configurations, and prompt templates for Claude
+Code, OpenCode, Gemini CLI, Codex, Hermes, and Pi are in
+`templates/harness/`, with a table of which have been verified against
+the real tool; `examples.runner.json` there is a complete starting point.
+Placeholders `{prompt}` (the filled template as text, for harnesses that
+take the prompt as an argument) and `{templates}` (that directory) are
+available too, and a `null` in `env` removes an inherited variable.
+
 ## The MCP tools
 
 `room_create`, `room_join`, `room_send`, `room_listen`, `room_invite`,

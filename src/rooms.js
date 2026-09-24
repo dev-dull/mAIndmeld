@@ -261,7 +261,8 @@ export function launchJoined(room, id, participantName, nowMs = Date.now()) {
   launch.participant = participantName;
   launch.joined_at = iso(nowMs);
   launchEvent(launch, "joined", `as ${participantName}`, nowMs);
-  addSystemMessage(room, `${launch.harness} joined as ${participantName}.`, { action: "launch", launch: id, state: "joined", harness: launch.harness }, nowMs);
+  // The join itself already produced "<name> joined as agent"; add a line only when the harness joined under another name.
+  if (!sameName(participantName, launch.harness)) addSystemMessage(room, `${launch.harness} joined as ${participantName}.`, { action: "launch", launch: id, state: "joined", harness: launch.harness }, nowMs);
   return launch;
 }
 

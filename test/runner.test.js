@@ -99,7 +99,7 @@ test("end to end: a launch reaches a harness process that joins the room with it
     const said = room.messages.find((m) => m.sender === "Echo");
     assert.match(said.content, /prompt says: You have been invited into mAIndmeld room MM-/);
     const lines = room.messages.filter((m) => m.kind === "system").map((m) => m.content);
-    for (const want of ["echo requested by test on runner laptop.", "echo starting on runner laptop.", "echo joined as Echo.", "echo exited (code 0)."]) assert.ok(lines.includes(want), want);
+    for (const want of ["echo requested by test on runner laptop.", "echo starting on runner laptop.", "Echo joined as agent.", "echo exited (code 0)."]) assert.ok(lines.includes(want), want);
     assert.ok(!s.app.auth.listTokens().some((t) => t.name === `launch-${done.id}` && !t.revoked_at), "launch token revoked");
     assert.deepEqual(fs.readdirSync(path.join(dir, "runs")).filter((n) => !n.endsWith(".log")), [], "prompt and run records cleaned up");
     assert.equal(runner.status().active.length, 0);
