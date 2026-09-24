@@ -6,6 +6,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- A model participant that gets a 413, or a 400 naming a length or token
+  limit, now halves its transcript window and retries at once instead of
+  counting a failure toward a ten-minute pause; the window creeps back by
+  one message per reply. Profiles take `max_prompt_chars`; health shows the
+  effective window; single messages over 4,000 characters are clipped in
+  the model's view (#28).
+
 ## [0.4.3] - 2026-09-22
 
 ### Changed

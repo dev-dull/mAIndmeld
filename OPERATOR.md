@@ -191,6 +191,19 @@ timeout with a hint when they disagree.
 }
 ```
 
+### When the endpoint says the request is too large
+
+Hosted tiers often cap the size of one request well below the model's
+context window. A model participant that gets a 413, or a 400 naming a
+token or length limit, halves the number of transcript messages it sends
+and retries at once; this is not counted as a failure and does not pause
+the participant. The window creeps back by one message per successful
+reply, so it settles just under the limit. `GET /api/health` shows each
+participant's effective `window` next to `window_max`. If you know the
+limit, set `max_prompt_chars` on the profile and the first request already
+fits. A single message longer than 4,000 characters is cut in the model's
+view with a marker; the transcript keeps it whole.
+
 ### Images and model participants
 
 A profile with `"vision": true` receives images in the room as image parts

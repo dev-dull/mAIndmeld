@@ -68,6 +68,26 @@ If you have nothing useful to add, reply with exactly ${PASS} and nothing else.`
 
 /** How many of the newest images a vision profile receives as bytes; older ones stay captions. */
 export const INLINE_IMAGES = 4;
+/** The window never shrinks below this many messages, whatever the endpoint says. */
+export const MIN_WINDOW = 6;
+/** A single message longer than this is cut in the model's view; the transcript keeps it whole. */
+export const MAX_MESSAGE_CHARS = 4000;
+
+/** Rough size of a prompt: the characters the endpoint will have to read. */
+export function promptChars(turns) {
+  return turns.reduce((sum, t) => sum + (typeof t.content === "string" ? t.content.length : t.content.reduce((s, p) => s + (p.type === "text" ? p.text.length : 64), 0)), 0);
+}
+
+/** An endpoint saying the request is too big: 413, or a 400 that names a length or token limit. */
+export function isTooLarge(error) {
+  if (error?.status === 413) return true;
+  return error?.status === 400 && /too large|too long|maximum context|context length|token limit|tokens? exceed|exceeds the limit|max_tokens|request entity/i.test(`${error.body || ""} ${error.message || ""}`);
+}
+
+function clip(text) {
+  if (text.length <= MAX_MESSAGE_CHARS) return text;
+  return `${text.slice(0, MAX_MESSAGE_CHARS)}\n[… ${text.length - MAX_MESSAGE_CHARS} more characters not shown to models]`;
+}
 
 /**
  * Build chat-completion messages from a room transcript. With a vision
@@ -75,7 +95,20 @@ export const INLINE_IMAGES = 4;
  * parts (a data URI, since local endpoints cannot fetch); everything else
  * about an image is its caption line. Non-vision profiles never get bytes.
  */
-export function buildPrompt(room, name, profile, { loadImage } = {}) {
+export function buildPrompt(room, name, profile, { loadImage, window: windowSize, maxChars } = {}) {
+  let size = windowSize || profile.window || 40;
+  let turns = buildTurns(room, name, profile, size, loadImage);
+  // An operator who knows the endpoint's per-request limit sets max_prompt_chars;
+  // the window shrinks until the prompt fits, down to the floor.
+  const limit = maxChars ?? profile.maxPromptChars;
+  while (limit && promptChars(turns) > limit && size > MIN_WINDOW) {
+    size = Math.max(MIN_WINDOW, Math.floor(size / 2));
+    turns = buildTurns(room, name, profile, size, loadImage);
+  }
+  return turns;
+}
+
+function buildTurns(room, name, profile, size, loadImage) {
   const system = [
     (profile.systemPrompt || DEFAULT_SYSTEM).replaceAll("{name}", name),
     "",
@@ -87,7 +120,7 @@ export function buildPrompt(room, name, profile, { loadImage } = {}) {
     `Messages from others are shown as "sender (kind): text". Reply with your message text only, no name prefix.`,
   ].filter(Boolean).join("\n");
 
-  const window = room.messages.filter((m) => m.kind !== "summary").slice(-(profile.window || 40));
+  const window = room.messages.filter((m) => m.kind !== "summary").slice(-size);
   const others = (m) => m.sender.toLowerCase() !== name.toLowerCase();
   const withImages = profile.vision && loadImage ? new Set(window.filter((m) => m.attachment && others(m)).slice(-INLINE_IMAGES).map((m) => m.id)) : new Set();
   const turns = [{ role: "system", content: system }];
@@ -95,7 +128,7 @@ export function buildPrompt(room, name, profile, { loadImage } = {}) {
   for (const m of window) {
     const mine = m.sender.toLowerCase() === name.toLowerCase();
     const role = mine ? "assistant" : "user";
-    const text = messageText(m);
+    const text = clip(messageText(m));
     let content = mine ? text : m.kind === "system" ? `[room] ${text}` : `${m.sender} (${m.kind}): ${text}`;
     if (withImages.has(m.id) && role === "user") {
       const uri = loadImage(room, m.attachment);
@@ -137,6 +170,7 @@ export class ModelParticipant {
     this.stopped = false;
     this.latencies = [];
     this.unsubscribe = null;
+    this.window = profile.window || 40; // effective; shrinks on "too large", grows back one per reply
   }
 
   start() {
@@ -159,6 +193,8 @@ export class ModelParticipant {
       profile: this.profileKey,
       replies: this.replies,
       failures: this.failures,
+      window: this.window,
+      window_max: this.profile.window || 40,
       paused_until: this.pausedUntil ? new Date(this.pausedUntil).toISOString() : null,
       latency_ms: { p50: pick(0.5), p95: pick(0.95), n: sorted.length },
     };
@@ -193,6 +229,25 @@ export class ModelParticipant {
     }
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.reply().catch((e) => this.hooks.log(`model ${this.name}: ${e.message}`)), DEBOUNCE_MS);
+  }
+
+  /**
+   * One completion, retried with a smaller window when the endpoint says the
+   * request is too large. A 413 is deterministic, so it is neither a failure
+   * nor a reason to pause: the same room simply needs a shorter view.
+   */
+  async completeWithinLimit(room) {
+    for (;;) {
+      const turns = buildPrompt(room, this.name, this.profile, { loadImage: this.hooks.loadImage, window: this.window });
+      try {
+        return await this.client.complete(turns, { maxTokens: this.profile.maxTokens ?? 600, temperature: this.profile.temperature });
+      } catch (error) {
+        if (!isTooLarge(error) || this.window <= MIN_WINDOW) throw error;
+        const before = this.window;
+        this.window = Math.max(MIN_WINDOW, Math.floor(this.window / 2));
+        this.hooks.log(`model ${this.name} in ${this.code}: request too large (${error.message}); window ${before} -> ${this.window}, retrying`);
+      }
+    }
   }
 
   /** A call-a-human motion was filed and this model is a voter. Decide yes or no. */
@@ -251,12 +306,12 @@ export class ModelParticipant {
     this.busy = true;
     this.pendingAgain = false;
     try {
-      const turns = buildPrompt(room, this.name, this.profile, { loadImage: this.hooks.loadImage });
-      const { text, ms } = await this.client.complete(turns, { maxTokens: this.profile.maxTokens ?? 600, temperature: this.profile.temperature });
+      const { text, ms } = await this.completeWithinLimit(room);
       this.latencies.push(ms);
       if (this.latencies.length > 200) this.latencies.shift();
       this.hooks.record?.(this.profileKey, { ms });
       this.failures = 0;
+      if (this.window < (this.profile.window || 40)) this.window += 1; // creep back toward the configured window
       this.lastReplyAt = Date.now();
       if (text.replace(/[\s.]+$/, "").toLowerCase() === PASS) {
         this.hooks.log(`model ${this.name} in ${this.code}: passed (${ms} ms)`);
