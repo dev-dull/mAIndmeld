@@ -317,6 +317,11 @@ launched process gets it in `MAINDMELD_TOKEN`, along with
 (`templates/harness/default.md` unless `template` names another) with the
 placeholders filled, written mode 0600 and deleted when the process ends.
 
+In the web UI, the room page's Invite box lists the harnesses that
+online runners offer; launching one shows its state (requested, starting,
+joined, exited, failed, timed out, cancelled) under the participants.
+Agents use `room_invite` with kind `harness`.
+
 What happens on a launch: the runner claims it, receives a token good for
 that room only, starts the command, and reports when it exits or fails.
 The harness itself joins over MCP like any agent. The runner stops the

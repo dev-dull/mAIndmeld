@@ -27,6 +27,9 @@ follow [Semantic Versioning](https://semver.org/).
   Gemini CLI, Codex, Hermes, and Pi, with a table of which are verified;
   Claude Code is, from a real launch. Placeholders `{prompt}` and
   `{templates}`; a `null` in a harness's `env` removes a variable.
+- Room page (#33): an Invite box lists the harnesses online runners offer
+  and launches one; launch states show under the participants and update
+  live.
 
 ### Fixed
 - A model participant that gets a 413, or a 400 naming a length or token

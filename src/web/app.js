@@ -362,7 +362,51 @@ function renderRoomMeta(room) {
   }
   $("#join-btn").classList.toggle("hidden", inRoom || closed);
   $("#leave-btn").classList.toggle("hidden", !inRoom || closed);
+  renderLaunches(room);
   renderMotions(room);
+}
+
+// Harness launches in this room: one line per launch with its state; active ones first.
+function renderLaunches(room) {
+  const el = $("#launches");
+  if (!el) return;
+  const launches = Object.values(room.launches || {});
+  if (!launches.length) return (el.innerHTML = "");
+  const order = { requested: 0, started: 0, joined: 1, exited: 2, failed: 2, timed_out: 2, cancelled: 2 };
+  launches.sort((a, b) => (order[a.state] ?? 3) - (order[b.state] ?? 3) || (a.requested_at < b.requested_at ? 1 : -1));
+  const words = { requested: "requested", started: "starting", joined: "joined", exited: "exited", failed: "failed", timed_out: "timed out", cancelled: "cancelled" };
+  el.innerHTML = launches.map((l) => {
+    const detail = l.state === "failed" && l.reason ? `: ${esc(l.reason)}` : l.state === "exited" && l.exit_code !== null ? ` (code ${l.exit_code})` : l.runner && l.state !== "joined" ? ` on ${esc(l.runner)}` : "";
+    return `<div class="launch" title="launch ${esc(l.id)}"><span class="state ${esc(l.state)}">${words[l.state] || esc(l.state)}</span><span>${esc(l.harness)}${detail}</span></div>`;
+  }).join("");
+}
+
+// The harnesses online runners offer, for the Invite box. Refreshed on load and on launch events.
+async function renderHarnesses(room) {
+  const select = $("#harness-select");
+  const btn = $("#harness-btn");
+  if (!select) return;
+  let runners = [];
+  try {
+    ({ runners } = await api("GET", "/api/runners"));
+  } catch {
+    runners = [];
+  }
+  const offers = [];
+  for (const r of runners) if (r.online) for (const h of r.harnesses) offers.push({ harness: h, runner: r.name });
+  const byHarness = new Map();
+  for (const o of offers) byHarness.set(o.harness, [...(byHarness.get(o.harness) || []), o.runner]);
+  const closed = room.status !== "open";
+  const active = new Set(Object.values(room.launches || {}).filter((l) => ["requested", "started", "joined"].includes(l.state)).map((l) => l.harness));
+  const current = select.value;
+  if (!byHarness.size) {
+    select.innerHTML = '<option value="">No runner online</option>';
+    btn.disabled = true;
+    return;
+  }
+  select.innerHTML = [...byHarness.entries()].sort().map(([h, rs]) => `<option value="${esc(h)}"${active.has(h) ? " disabled" : ""}>${esc(h)}${rs.length > 1 ? ` (${rs.length} runners)` : ` (${esc(rs[0])})`}${active.has(h) ? " · in the room" : ""}</option>`).join("");
+  if ([...byHarness.keys()].includes(current)) select.value = current;
+  btn.disabled = closed || !select.value || active.has(select.value);
 }
 
 async function loadRoom(code) {
@@ -370,6 +414,10 @@ async function loadRoom(code) {
   state.room = room;
   state.invitation = invitation;
   renderRoomMeta(room);
+  if (!state.harnessesLoaded) {
+    state.harnessesLoaded = true;
+    renderHarnesses(room).catch(() => {});
+  }
   for (const m of room.messages) renderMessage(m);
   $("#transcript").scrollTop = $("#transcript").scrollHeight;
 }
@@ -395,6 +443,7 @@ function initRoom() {
   es.addEventListener("participant", () => loadRoom(code).catch(() => {}));
   es.addEventListener("room", () => loadRoom(code).catch(() => {}));
   es.addEventListener("motion", () => loadRoom(code).catch(() => {}));
+  es.addEventListener("launch", () => loadRoom(code).then(() => renderHarnesses(state.room)).catch(() => {}));
   setInterval(() => state.room && renderRoomMeta(state.room), 5_000);
 
   $("#hold-btn").addEventListener("click", async () => {
@@ -462,6 +511,21 @@ function initRoom() {
     }
   });
   $("#join-btn").addEventListener("click", () => ensureJoined(code).catch((e) => toast(e.message)));
+  $("#invite-harness").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const harness = $("#harness-select").value;
+    if (!harness) return;
+    try {
+      await ensureJoined(code);
+      const { launch, existing } = await api("POST", `/api/rooms/${code}/launches`, { harness });
+      toast(existing ? `${harness} is already on its way` : `${harness} requested on runner ${launch.runner}`);
+      await loadRoom(code);
+      await renderHarnesses(state.room);
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+  $("#harness-select").addEventListener("change", () => renderHarnesses(state.room).catch(() => {}));
   $("#leave-btn").addEventListener("click", () => api("POST", `/api/rooms/${code}/leave`, {}).catch((e) => toast(e.message)));
   $("#mode-btn").addEventListener("click", async () => {
     const next = state.room.response_mode === "addressed_only" ? "open" : "addressed_only";
