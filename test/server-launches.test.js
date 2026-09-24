@@ -190,6 +190,71 @@ test("failure paths: spawn failure, never joins, late join refused, room close c
   }
 });
 
+test("only the runner's own token may claim or report its launches; an unclaimed launch fails at the claim window even with the runner online", async () => {
+  const s = await boot({ limits: { rooms_per_hour: 100 }, extra: { launch: { claim_timeout_seconds: 1 } } });
+  try {
+    const { token: other } = s.app.auth.createToken("someone-else");
+    const runner = await connectRunner(s, "laptop", "hermes");
+    await runner.waitFor((e) => e.type === "hello");
+    const code = await room(s);
+    const l = (await s.req("POST", `/api/rooms/${code}/launches`, { body: { harness: "hermes" } })).data.launch;
+    const spoof = await s.req("POST", `/api/launches/${l.id}/claim`, { token: other, body: { runner: "laptop" } });
+    assert.equal(spoof.status, 403, "another token naming the runner cannot claim");
+    assert.match(spoof.data.error, /only runner laptop's own token/);
+    const claim = await runner.claim(l.id);
+    assert.equal(claim.status, 200);
+    const spoofStatus = await s.req("POST", `/api/launches/${l.id}/status`, { token: other, body: { state: "failed", reason: "sabotage" } });
+    assert.equal(spoofStatus.status, 403, "another token cannot end the launch");
+    assert.equal((await launchesOf(s, code))[0].state, "started");
+    assert.equal((await runner.status(l.id, { state: "exited", exit_code: 0 })).status, 200);
+
+    // Online but never claims: the claim window ends it and the runner is told.
+    const code2 = await room(s, "never claimed");
+    const l2 = (await s.req("POST", `/api/rooms/${code2}/launches`, { body: { harness: "hermes" } })).data.launch;
+    await new Promise((r) => setTimeout(r, 1100));
+    await s.app.service.tick();
+    const now = (await launchesOf(s, code2))[0];
+    assert.equal(now.state, "failed");
+    assert.equal(now.reason, "runner did not claim in time");
+    assert.ok(await runner.waitFor((e) => e.type === "cancel" && e.data.launch === l2.id));
+    runner.disconnect();
+  } finally {
+    await s.close();
+  }
+});
+
+test("after a restart the server remembers runners and their active launches", async () => {
+  const s = await boot({ limits: { rooms_per_hour: 100 } });
+  const dataDir = s.dataDir;
+  let second = null;
+  try {
+    const runner = await connectRunner(s, "laptop", "hermes");
+    await runner.waitFor((e) => e.type === "hello");
+    const code = await room(s);
+    const l = (await s.req("POST", `/api/rooms/${code}/launches`, { body: { harness: "hermes" } })).data.launch;
+    assert.equal((await runner.claim(l.id)).status, 200);
+    runner.disconnect();
+    await s.app.stop();
+
+    const { loadConfig } = await import("../src/config.js");
+    const { createApp } = await import("../src/server.js");
+    second = createApp(loadConfig({ dataDir, port: 0 }, { USER: "tester" }));
+    await second.start();
+    const health = await (await fetch(`${second.config.publicOrigin}/api/health`)).json();
+    // Its last heartbeat is seconds old, so it still counts as online inside the grace window; what matters is the memory of it and its active launch.
+    assert.deepEqual(health.runners.map((r) => [r.name, r.active]), [["laptop", 1]], "runner remembered with its active launch counted");
+    assert.equal(health.launches.active, 1);
+    // The runner reconnects under the same name and token and gets the launch replayed only if still requested; this one is started, so nothing to replay.
+    const back = await connectRunner({ base: second.config.publicOrigin, token: s.token }, "laptop", "hermes");
+    assert.ok(await back.waitFor((e) => e.type === "hello"));
+    assert.equal((await fetch(`${second.config.publicOrigin}/api/runners`, { headers: { authorization: `Bearer ${s.token}` } }).then((r) => r.json())).runners[0].online, true);
+    back.disconnect();
+  } finally {
+    if (second) await second.stop();
+    await s.close().catch(() => {});
+  }
+});
+
 test("two runners: the request names one or the least busy wins; a scoped token cannot act as a runner", async () => {
   const s = await boot({ limits: { rooms_per_hour: 100 } });
   try {

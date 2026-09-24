@@ -290,7 +290,7 @@ export function overdueLaunches(room, nowMs = Date.now(), runnerOnline = () => t
   const out = [];
   for (const l of activeLaunches(room)) {
     if (l.state === "started" && nowMs - Date.parse(l.claimed_at) > join) out.push({ launch: l, state: "timed_out" });
-    else if (l.state === "requested" && nowMs - Date.parse(l.requested_at) > claim && !runnerOnline(l.runner)) out.push({ launch: l, state: "failed", reason: "runner offline" });
+    else if (l.state === "requested" && nowMs - Date.parse(l.requested_at) > claim) out.push({ launch: l, state: "failed", reason: runnerOnline(l.runner) ? "runner did not claim in time" : "runner offline" });
   }
   return out;
 }
