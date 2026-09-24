@@ -1147,6 +1147,8 @@ export function createApp(config = loadConfig()) {
     const body = await readBody(req);
     const record = auth.verifyToken(String(body.token ?? "").trim());
     if (!record) throw new HttpError(401, "that token is not valid");
+    // A browser session carries no scope, so a scoped token must not become one.
+    if (record.scope) throw new HttpError(403, `token ${record.name} is scoped to room ${record.scope.room} and cannot sign in to the browser`);
     const name = rooms.cleanName(body.name || record.name, "display name");
     const id = auth.createSession(record.name, name);
     const secure = config.publicOrigin.startsWith("https:");
@@ -1232,9 +1234,8 @@ export function createApp(config = loadConfig()) {
       const sig = url.searchParams.get("sig");
       if (!(sig && signer.verify(code, id, sig))) {
         if (sig) throw new HttpError(403, "the attachment link has expired or is not valid; ask for a fresh one by listening again");
-        requireAuth(req);
+        requireScope(requireAuth(req), code);
       }
-      if (!sig) requireScope(auth.authenticate(req), code);
       const { record, file } = service.attachment(code, id);
       res.writeHead(200, {
         "content-type": record.type,
@@ -1247,7 +1248,7 @@ export function createApp(config = loadConfig()) {
 
     const principal = requireAuth(req);
     checkOrigin(req, principal);
-    requireScope(principal, code || null);
+    requireScope(principal, code);
 
     if (!code) {
       if (req.method === "GET") {

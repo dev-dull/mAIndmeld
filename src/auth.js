@@ -76,6 +76,8 @@ export class Auth {
   /** A token for one launch of a harness into one room; expires on its own and is revoked when the launch ends. */
   createLaunchToken({ room, harness, launch, ttlMs = 15 * 60_000 }, nowMs = Date.now()) {
     if (!room || !launch) throw new AuthError(400, "a launch token needs a room and a launch id");
+    // The token name is "launch-" plus the id and must fit the name rule, so the id is checked here with a clear message.
+    if (!/^[A-Za-z0-9_.-]{1,32}$/.test(String(launch))) throw new AuthError(400, "a launch id is 1-32 characters of letters, digits, dot, dash, or underscore");
     return this.createToken(`launch-${launch}`, { expiresAt: nowMs + ttlMs, scope: { room, harness, launch } });
   }
 

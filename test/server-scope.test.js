@@ -62,6 +62,16 @@ test("over MCP a launch token may act in its room and search, and nothing else",
   assert.match(elsewhere.content[0].text, new RegExp(`scoped to room ${code}, not ${other}`));
 });
 
+test("a launch token cannot sign in to the browser, and a bad launch id is refused with a clear message", async () => {
+  const origin = s.base;
+  const login = await s.req("POST", "/api/session", { token: null, origin, body: { token: scoped, name: "Sneaky" } });
+  assert.equal(login.status, 403, JSON.stringify(login.data));
+  assert.match(login.data.error, /scoped to room .* cannot sign in/);
+  assert.equal((await s.req("POST", "/api/session", { token: null, origin, body: { token: s.token, name: "Ana" } })).status, 200, "an ordinary token still signs in");
+  assert.throws(() => s.app.auth.createLaunchToken({ room: code, harness: "x", launch: "0f2c6a3e-1c1e-4a6b-9c1d-7e8f9a0b1c2d" }), /launch id is 1-32 characters/);
+  assert.throws(() => s.app.auth.createLaunchToken({ room: code, harness: "x", launch: "a/b" }), /launch id is 1-32 characters/);
+});
+
 test("expiry and revocation end a launch token; the tick sweeps the record", async () => {
   const short = s.app.auth.createLaunchToken({ room: code, harness: "pi", launch: "L2", ttlMs: 50 });
   assert.equal((await s.req("GET", `/api/rooms/${code}`, { token: short.token })).status, 200);
