@@ -157,5 +157,5 @@ test("tool errors come back as isError results, not transport failures", async (
   const noCode = await call("room_listen", {});
   assert.match(noCode.content[0].text, /code is required for room_listen/);
   const badKind = await call("room_invite", { code: "MM-ZZZZ", kind: "ghost" });
-  assert.match(badKind.content[0].text, /kind must be session, model, or human/);
+  assert.match(badKind.content[0].text, /kind must be session, model, human, or harness/);
 });
