@@ -192,6 +192,7 @@ test("a harness that ignores SIGTERM is killed anyway, on cancel and on reap", a
     await s.req("POST", `/api/rooms/${c1}/launches`, { body: { harness: "stubborn" } });
     assert.ok(await waitFor(() => runner.status().active.length === 1));
     const pid1 = runner.status().active[0].pid;
+    await new Promise((r) => setTimeout(r, 600)); // let node boot and install its SIGTERM handler
     runner.cancel(runner.status().active[0].launch, "test");
     await new Promise((r) => setTimeout(r, 150));
     assert.doesNotThrow(() => process.kill(pid1, 0), "SIGTERM was ignored");
@@ -201,6 +202,7 @@ test("a harness that ignores SIGTERM is killed anyway, on cancel and on reap", a
     await s.req("POST", `/api/rooms/${c2}/launches`, { body: { harness: "stubborn" } });
     assert.ok(await waitFor(() => runner.status().active.length === 1));
     const pid2 = runner.status().active[0].pid;
+    await new Promise((r) => setTimeout(r, 600));
     runner.active.clear();
     runner.stopped = true;
     runner.controller.abort();
