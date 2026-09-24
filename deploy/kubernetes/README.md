@@ -43,6 +43,19 @@ kubectl apply -k deploy/kubernetes/overlays/traefik
 kubectl -n maindmeld logs deploy/maindmeld | grep bootstrap   # first-run token
 ```
 
+## The runner
+
+The base also deploys a runner (`runner-deployment.yaml`) from the
+`maindmeld-runner` image, which carries Claude Code and OpenCode. It reads
+`runner-configmap.yaml`, reaches the server through its Service, and takes
+its token and the harnesses' provider keys from the `maindmeld-runner-env`
+Secret (`runner-secret.yaml` holds placeholders; replace them or manage
+the Secret out of band and drop the file from the kustomization). Mint the
+token with `token create runner-cluster`. The runner is unprivileged, has
+no Docker socket, and starts harnesses as processes in its own pod;
+sandboxing beyond that is yours. If you do not want a runner, remove the
+three runner files from `base/kustomization.yaml` in your own overlay.
+
 ## Tokens
 
 The first start with no tokens prints one named `bootstrap`. Use it once

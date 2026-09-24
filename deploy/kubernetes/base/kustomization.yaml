@@ -8,3 +8,6 @@ resources:
   - pvc.yaml
   - deployment.yaml
   - service.yaml
+  - runner-configmap.yaml
+  - runner-secret.yaml
+  - runner-deployment.yaml

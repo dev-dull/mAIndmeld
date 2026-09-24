@@ -8,4 +8,5 @@ scripts
 deploy
 *.md
 !README.md
+!templates/harness/*.md
 .env*

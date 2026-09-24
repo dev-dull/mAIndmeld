@@ -11,6 +11,16 @@
 #
 # The demo profile pulls a small instruct model into a llama.cpp server on
 # first start; expect a download of a few hundred megabytes.
+#
+# A runner beside the server, so a room can launch Claude Code or OpenCode
+# with your own credentials:
+#
+#   maindmeld token create runner-compose    # put it in .env as MAINDMELD_RUNNER_TOKEN
+#   docker compose --profile runner up -d
+#
+# The runner container is unprivileged and never sees the Docker socket.
+# Harness logins live in the runner-home volume; provider keys come from
+# .env (ANTHROPIC_API_KEY for Claude Code, whatever OpenCode's provider needs).
 
 services:
   maindmeld:
@@ -32,6 +42,30 @@ services:
       - ./deploy/compose/config.json:/config/config.json:ro
     restart: unless-stopped
 
+  runner:
+    profiles: ["runner"]
+    image: ghcr.io/dev-dull/maindmeld-runner:0.4.4
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+    depends_on:
+      - maindmeld
+    environment:
+      MAINDMELD_RUNNER_CONFIG: /config/runner.json
+      # From .env or your shell; provider keys (ANTHROPIC_API_KEY, ...) come from .env too.
+      MAINDMELD_RUNNER_TOKEN: ${MAINDMELD_RUNNER_TOKEN:-}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./deploy/compose/runner.json:/config/runner.json:ro
+      - runner-state:/state
+      - runner-home:/home/node
+      # Opt-in, and only for the runner, never the server: give each harness
+      # its own container by handing the runner the host's Docker socket.
+      # - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
   llama:
     profiles: ["demo"]
     image: ghcr.io/ggml-org/llama.cpp:server
@@ -50,3 +84,5 @@ services:
 volumes:
   maindmeld-data:
   llama-models:
+  runner-state:
+  runner-home:

@@ -335,6 +335,15 @@ claimed and the server fails them when nobody claims in time.
 Sandboxing the harness is yours: the runner enforces the token's scope
 and its own list of harnesses, nothing more.
 
+With Docker, `docker compose --profile runner up -d` starts a runner
+beside the server from the `maindmeld-runner` image, which carries Claude
+Code and OpenCode; put the runner's token and your provider keys in
+`.env`, and harness logins persist in the `runner-home` volume. On
+Kubernetes the base manifests deploy the same image as its own
+Deployment. Neither sees the Docker socket; handing it to the runner
+container is an opt-in commented in `compose.yaml`, and never applies to
+the server.
+
 Ready-made entries, MCP configurations, and prompt templates for Claude
 Code, OpenCode, Gemini CLI, Codex, Hermes, and Pi are in
 `templates/harness/`, with a table of which have been verified against

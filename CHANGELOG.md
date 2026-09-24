@@ -30,6 +30,11 @@ follow [Semantic Versioning](https://semver.org/).
 - Room page (#33): an Invite box lists the harnesses online runners offer
   and launches one; launch states show under the participants and update
   live.
+- Runner packaging (#34): `Dockerfile.runner` builds `maindmeld-runner`
+  with Claude Code and OpenCode preinstalled, published by CI beside the
+  server image; `compose.yaml` gains a `runner` profile; the Kubernetes
+  base deploys a runner with its own ConfigMap and Secret. Unprivileged,
+  no Docker socket; the socket is an opt-in for the runner only.
 
 ### Fixed
 - A model participant that gets a 413, or a 400 naming a length or token

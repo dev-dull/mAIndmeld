@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maindmeld-runner-config
+data:
+  # The runner's own config: commands come only from here. Reaches the
+  # server through its Service; {templates} is the image's templates dir.
+  runner.json: |
+    {
+      "name": "cluster",
+      "server": "http://maindmeld:7340",
+      "token_env": "MAINDMELD_RUNNER_TOKEN",
+      "state_dir": "/state",
+      "max_concurrent": 2,
+      "harnesses": {
+        "claude-code": {
+          "command": ["claude", "-p", "{prompt}", "--mcp-config", "{templates}/claude-code.mcp.json", "--strict-mcp-config", "--allowedTools", "mcp__maindmeld__*", "--max-turns", "60"],
+          "env": { "CLAUDECODE": null, "CLAUDE_CODE_ENTRYPOINT": null },
+          "timeout_minutes": 120
+        },
+        "opencode": {
+          "command": ["opencode", "run", "{prompt}"],
+          "env": { "OPENCODE_CONFIG": "{templates}/opencode.json" },
+          "timeout_minutes": 120
+        }
+      }
+    }
