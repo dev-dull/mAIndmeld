@@ -151,6 +151,14 @@ tokens, the server creates one named `bootstrap` and prints it to its log.
 Rate limits and statistics are keyed by token name, so shared tokens
 blur both.
 
+A token may also carry an expiry and a scope. The server mints such
+tokens itself when it launches a harness into a room (see the runner):
+each is good for one room only, refused everywhere else including room
+creation and the lobby, allowed to search the record, revoked when the
+launch ends or the room closes, and dropped from the store once expired.
+`token list` shows the expiry and the room. Ordinary tokens never carry
+either and are never touched by a room's revocation.
+
 ### The MCP endpoint
 
 `<origin>/mcp`, streamable HTTP with JSON responses, stateless, bearer

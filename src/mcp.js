@@ -190,6 +190,11 @@ export function createMcp({ service, version, log }) {
     for (const field of needs[name] || []) {
       if (a[field] === undefined || a[field] === null || a[field] === "") throw new Error(`${field} is required for ${name}`);
     }
+    if (principal.scope) {
+      // A launch token lives in one room: no creating or listing rooms; every room tool must name its room.
+      if (name === "room_create" || name === "room_list") throw new Error(`this token is scoped to room ${principal.scope.room} and cannot ${name === "room_create" ? "create rooms" : "list rooms"}`);
+      if (a.code && a.code !== principal.scope.room) throw new Error(`this token is scoped to room ${principal.scope.room}, not ${a.code}`);
+    }
     switch (name) {
       case "room_create": {
         const created = await service.createRoom(principal, { title: a.title, objective: a.objective, name: me, kind: "agent", client: "mcp", response_mode: a.response_mode });

@@ -1,6 +1,11 @@
 // Tokens and browser sessions. Tokens are hashed at rest; the plaintext is
 // shown once at creation. Sessions are cookie-backed and persisted so a
 // restart does not sign everyone out. DESIGN.md 5.1.
+//
+// A token may carry an expiry and a scope. A scoped token belongs to one
+// room (and names the harness and launch it was minted for) and can do
+// nothing outside it; the server enforces that on every room-addressed
+// request. Records without these fields behave as they always have.
 
 import crypto from "node:crypto";
 
@@ -50,7 +55,7 @@ export class Auth {
     return this.readTokens().tokens.some((t) => !t.revoked_at);
   }
 
-  createToken(name) {
+  createToken(name, { expiresAt = null, scope = null } = {}) {
     const clean = String(name ?? "").trim();
     if (!/^[A-Za-z0-9_.-]{1,40}$/.test(clean)) {
       throw new AuthError(400, "token name must be 1-40 characters of letters, digits, dot, dash, or underscore");
@@ -60,13 +65,46 @@ export class Auth {
       throw new AuthError(409, `an active token named ${clean} already exists`);
     }
     const plaintext = TOKEN_PREFIX + crypto.randomBytes(32).toString("base64url");
-    data.tokens.push({ name: clean, hash: hash(plaintext), created_at: new Date().toISOString(), revoked_at: null });
+    const record = { name: clean, hash: hash(plaintext), created_at: new Date().toISOString(), revoked_at: null };
+    if (expiresAt) record.expires_at = new Date(expiresAt).toISOString();
+    if (scope) record.scope = { room: scope.room, harness: scope.harness ?? null, launch: scope.launch ?? null };
+    data.tokens.push(record);
     this.writeTokens(data);
-    return { name: clean, token: plaintext };
+    return { name: clean, token: plaintext, expires_at: record.expires_at ?? null, scope: record.scope ?? null };
+  }
+
+  /** A token for one launch of a harness into one room; expires on its own and is revoked when the launch ends. */
+  createLaunchToken({ room, harness, launch, ttlMs = 15 * 60_000 }, nowMs = Date.now()) {
+    if (!room || !launch) throw new AuthError(400, "a launch token needs a room and a launch id");
+    return this.createToken(`launch-${launch}`, { expiresAt: nowMs + ttlMs, scope: { room, harness, launch } });
   }
 
   listTokens() {
-    return this.readTokens().tokens.map(({ name, created_at, revoked_at }) => ({ name, created_at, revoked_at }));
+    return this.readTokens().tokens.map(({ name, created_at, revoked_at, expires_at, scope }) => ({ name, created_at, revoked_at, expires_at: expires_at ?? null, scope: scope ?? null }));
+  }
+
+  /** Revoke every active token scoped to a room (the room closed, or a launch ended). Returns the names. */
+  revokeScoped(room, { launch = null } = {}) {
+    const data = this.readTokens();
+    const stamp = new Date().toISOString();
+    const names = [];
+    for (const t of data.tokens) {
+      if (t.revoked_at || !t.scope || t.scope.room !== room) continue;
+      if (launch && t.scope.launch !== launch) continue;
+      t.revoked_at = stamp;
+      names.push(t.name);
+    }
+    if (names.length) this.writeTokens(data);
+    return names;
+  }
+
+  /** Drop expired records; nothing can use them and they would only pile up. Returns how many went. */
+  sweepExpiredTokens(nowMs = Date.now()) {
+    const data = this.readTokens();
+    const before = data.tokens.length;
+    data.tokens = data.tokens.filter((t) => !(t.expires_at && Date.parse(t.expires_at) < nowMs));
+    if (data.tokens.length !== before) this.writeTokens(data);
+    return before - data.tokens.length;
   }
 
   revokeToken(name) {
@@ -84,13 +122,16 @@ export class Auth {
     return record.name;
   }
 
-  verifyToken(plaintext) {
+  verifyToken(plaintext, nowMs = Date.now()) {
     if (typeof plaintext !== "string" || !plaintext.startsWith(TOKEN_PREFIX)) return null;
     const candidate = Buffer.from(hash(plaintext), "hex");
     for (const t of this.readTokens().tokens) {
       if (t.revoked_at) continue;
+      if (t.expires_at && Date.parse(t.expires_at) < nowMs) continue;
       const stored = Buffer.from(t.hash, "hex");
-      if (stored.length === candidate.length && crypto.timingSafeEqual(stored, candidate)) return { name: t.name };
+      if (stored.length === candidate.length && crypto.timingSafeEqual(stored, candidate)) {
+        return { name: t.name, scope: t.scope ?? null, expires_at: t.expires_at ?? null };
+      }
     }
     return null;
   }
@@ -151,8 +192,9 @@ export class Auth {
   // ---- request authentication ----
 
   /**
-   * Returns { kind: "token", name } for a bearer request,
-   * { kind: "session", id, name, token_name } for a cookie request, or null.
+   * Returns { kind: "token", name, scope } for a bearer request (scope is
+   * null for an ordinary token), { kind: "session", id, name, token_name }
+   * for a cookie request, or null.
    */
   authenticate(req) {
     const header = req.headers.authorization;
@@ -160,7 +202,7 @@ export class Auth {
       const [scheme, value] = header.split(" ", 2);
       if (scheme?.toLowerCase() === "bearer") {
         const record = this.verifyToken(value?.trim());
-        if (record) return { kind: "token", name: record.name };
+        if (record) return { kind: "token", name: record.name, scope: record.scope };
       }
       return null;
     }

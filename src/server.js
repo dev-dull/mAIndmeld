@@ -968,6 +968,13 @@ export function createApp(config = loadConfig()) {
           closingRooms.delete(code);
         }
       }
+      // Expired tokens are dead already; drop the records.
+      try {
+        const gone = auth.sweepExpiredTokens();
+        if (gone) log(`removed ${gone} expired token record(s)`);
+      } catch (error) {
+        log(`tick tokens: ${error.message}`);
+      }
       // Uploads nobody ever attached to a message are removed after the orphan window.
       const orphanCutoff = Date.now() - config.limits.attachmentOrphanSeconds * 1000;
       for (const code of [...attachmentRooms]) {
@@ -1069,6 +1076,18 @@ export function createApp(config = loadConfig()) {
     return principal;
   }
 
+  /**
+   * A scoped token belongs to one room. Anything addressed to another room,
+   * to room creation, or to the lobby is refused; reading the record
+   * (kb_search) is allowed because the pre-flight rule expects it.
+   */
+  function requireScope(principal, code) {
+    const scope = principal.scope;
+    if (!scope) return;
+    if (!code) throw new HttpError(403, `token ${principal.name} is scoped to room ${scope.room} and cannot do this`);
+    if (code !== scope.room) throw new HttpError(403, `token ${principal.name} is scoped to room ${scope.room}, not ${code}`);
+  }
+
   function originAllowed(req) {
     const origin = req.headers.origin;
     return Boolean(origin) && config.allowedOrigins.has(origin);
@@ -1158,7 +1177,7 @@ export function createApp(config = loadConfig()) {
     }
 
     if (head === "events" && req.method === "GET") {
-      requireAuth(req);
+      requireScope(requireAuth(req), null);
       return events.subscribe(null, res);
     }
 
@@ -1166,6 +1185,7 @@ export function createApp(config = loadConfig()) {
       const principal = requireAuth(req);
       checkOrigin(req, principal);
       if (code === "sweeps") {
+        requireScope(principal, null);
         if (req.method === "GET" && !sub) return send(res, 200, { sweeps: service.sweep.list(), state: service.sweep.state() });
         if (req.method === "GET" && sub) {
           const r = service.sweep.read(sub);
@@ -1214,6 +1234,7 @@ export function createApp(config = loadConfig()) {
         if (sig) throw new HttpError(403, "the attachment link has expired or is not valid; ask for a fresh one by listening again");
         requireAuth(req);
       }
+      if (!sig) requireScope(auth.authenticate(req), code);
       const { record, file } = service.attachment(code, id);
       res.writeHead(200, {
         "content-type": record.type,
@@ -1226,6 +1247,7 @@ export function createApp(config = loadConfig()) {
 
     const principal = requireAuth(req);
     checkOrigin(req, principal);
+    requireScope(principal, code || null);
 
     if (!code) {
       if (req.method === "GET") {

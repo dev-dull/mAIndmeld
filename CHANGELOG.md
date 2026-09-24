@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Tokens may carry an expiry and a room scope; the server mints one per
+  harness launch, refuses it outside its room, revokes it when the launch
+  or the room ends, and sweeps expired records (#29, first step of #36).
+
 ### Fixed
 - A model participant that gets a 413, or a 400 naming a length or token
   limit, now halves its transcript window and retries at once instead of

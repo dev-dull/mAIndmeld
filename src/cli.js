@@ -403,7 +403,7 @@ class Cli {
     } else if (action === "list") {
       const list = auth.listTokens();
       if (!list.length) return this.io.out("no tokens");
-      for (const t of list) this.io.out(`${t.name.padEnd(20)} created ${t.created_at}${t.revoked_at ? `  revoked ${t.revoked_at}` : ""}`);
+      for (const t of list) this.io.out(`${t.name.padEnd(20)} created ${t.created_at}${t.expires_at ? `  expires ${t.expires_at}` : ""}${t.scope ? `  scope ${t.scope.room}${t.scope.harness ? ` (${t.scope.harness})` : ""}` : ""}${t.revoked_at ? `  revoked ${t.revoked_at}` : ""}`);
     } else if (action === "revoke") {
       this.io.out(`revoked ${auth.revokeToken(name)}`);
     } else throw new Error("usage: maindmeld token create NAME | list | revoke NAME");

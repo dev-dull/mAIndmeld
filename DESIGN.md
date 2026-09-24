@@ -244,6 +244,14 @@ both modes and is never "it's only loopback".
 
 A server with no token configured refuses to bind a non-loopback address.
 
+Tokens may carry `expires_at` and `scope: { room, harness, launch }`.
+The server mints a scoped token per harness launch (section 7.4). A
+scoped token is refused for any room but its own, for room creation, for
+the lobby stream, and for sweeps; it may read and search the record,
+since the pre-flight rule expects every participant to. Expired records
+are swept by the scheduler; a room's close revokes every token scoped to
+it. Records without the fields are unchanged, so nothing migrates.
+
 ### 5.2 Endpoints
 
 | Method and path | Purpose |
