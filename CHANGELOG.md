@@ -35,6 +35,9 @@ follow [Semantic Versioning](https://semver.org/).
   server image; `compose.yaml` gains a `runner` profile; the Kubernetes
   base deploys a runner with its own ConfigMap and Secret. Unprivileged,
   no Docker socket; the socket is an opt-in for the runner only.
+- Docs (#35): the runner in DESIGN.md (scope, section 7.4, decision 16),
+  OPERATOR.md (setup, config, lifecycle, troubleshooting), README, and
+  the Kubernetes README.
 
 ### Fixed
 - A model participant that gets a 413, or a 400 naming a length or token

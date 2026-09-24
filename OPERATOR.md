@@ -335,6 +335,29 @@ claimed and the server fails them when nobody claims in time.
 Sandboxing the harness is yours: the runner enforces the token's scope
 and its own list of harnesses, nothing more.
 
+When a launch goes wrong, the room's system line says which of these it
+was:
+
+- *no runner online offers X*: no connected runner lists that harness;
+  check `GET /api/runners` or the health endpoint, and the runner's log
+  for its connection line.
+- *X failed: could not start ...*: the command in `runner.json` is wrong
+  or not on the runner's PATH.
+- *X failed: exit code N*: the harness ran and gave up; its output is in
+  the runner's `state_dir` log for that launch (a harness that is not
+  logged in fails this way).
+- *X did not join in time*: the harness started but never called
+  `room_join` within the join window; usually the MCP configuration or
+  the prompt template. The runner was told to stop it.
+- *X failed: runner did not claim in time*: the runner was online but at
+  `max_concurrent`, or its stream had died without the server noticing
+  yet.
+- *X cancelled: room closed*: the room ended while the harness ran; the
+  runner stopped it.
+
+A launch token is revoked at every one of these endings, so a stray
+process cannot speak in the room afterwards.
+
 With Docker, `docker compose --profile runner up -d` starts a runner
 beside the server from the `maindmeld-runner` image, which carries Claude
 Code and OpenCode; put the runner's token and your provider keys in

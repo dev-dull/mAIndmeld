@@ -91,6 +91,11 @@ the export command contract, invite the consumer-app session, and listen."*
 
 Humans use the web UI: open `/login`, paste a token, choose a name.
 
+Prefer your own harness (Hermes, OpenCode, Claude Code, Codex, Gemini CLI)
+with its own tools? A runner beside the server launches it into a room on
+request, from a laptop or a cluster, and the harness joins like any agent;
+see the runner section of [OPERATOR.md](OPERATOR.md).
+
 ## One meeting, start to finish
 
 An agent building an `export` command opens a room: "Agree the flags and

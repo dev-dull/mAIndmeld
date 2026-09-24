@@ -2,7 +2,8 @@
 
 # mAIndmeld design
 
-Status: draft 4, 2026-09-20. Reviewed by the author and checked by
+Status: draft 5, 2026-09-25 (the runner, section 7.4 and decision 16,
+added after room MM-SW7R). Reviewed by the author and checked by
 dubber-ruck in plan mode. Implementation status: all six milestones built
 (server, web UI, CLI, MCP, model participants, deployment, motions and
 human powers, guardrails, summarizer and knowledge store, retrieval with
@@ -34,6 +35,9 @@ In scope:
 - Automatic summarization on close into a retrieval-ready knowledge store.
 - A scheduled sweep that retires superseded decisions.
 - A retrieval tool and join-time injection of relevant prior decisions.
+- A runner, so a user's own agent harness can be launched into a room on
+  request with its own tools, the same way beside a Docker container and
+  in a cluster (section 7.4).
 
 Audience and deployment:
 
@@ -965,6 +969,23 @@ Qwen and Gemini model participants (note M20260921-CQBR in that store):
     attached files are not expired, since closed rooms stay readable.
     Editing, video, audio, other file types, and several images per
     message are out of scope. Tracked in issue #7.
+16. **A runner launches harnesses; the server never runs a command.**
+    Room MM-SW7R (Qwen, GPT-OSS, a Claude agent; 2026-09-24) designed how
+    a user's own harness (Hermes, OpenCode, Claude Code, Codex, Gemini
+    CLI, Pi) gets into a room with its tools, with the same result beside
+    a laptop's Docker container and in Kubernetes. The transport is a
+    companion process from this codebase that lives where the harnesses
+    live and connects outbound; it is control plane only, and the harness
+    joins over MCP as an ordinary agent with a per-launch token scoped to
+    the room. Commands, working directories, and environments come only
+    from the runner's own file. Rejected: the Docker socket in the server
+    container (host root); docker-in-docker as the base image (a
+    privileged container, no parity with Kubernetes, and no access to the
+    user's credentials); webhook push (fails behind NAT); a Kubernetes Job
+    per launch as the default (no parity; a possible later runner mode).
+    Single-tenant trust holds: sandboxing the harness is the user's job,
+    stated in the docs. A harness counts as supported only after a real
+    launch has been run by hand. Tracked in issue #36.
 
 ## 18. Milestones
 
