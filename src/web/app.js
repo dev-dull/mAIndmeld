@@ -372,7 +372,7 @@ function renderLaunches(room) {
   if (!el) return;
   const launches = Object.values(room.launches || {});
   if (!launches.length) return (el.innerHTML = "");
-  const order = { requested: 0, started: 0, joined: 1, exited: 2, failed: 2, timed_out: 2, cancelled: 2 };
+  const order = { started: 0, requested: 1, joined: 2, exited: 3, failed: 3, timed_out: 3, cancelled: 3 };
   launches.sort((a, b) => (order[a.state] ?? 3) - (order[b.state] ?? 3) || (a.requested_at < b.requested_at ? 1 : -1));
   const words = { requested: "requested", started: "starting", joined: "joined", exited: "exited", failed: "failed", timed_out: "timed out", cancelled: "cancelled" };
   el.innerHTML = launches.map((l) => {
@@ -399,6 +399,7 @@ async function renderHarnesses(room) {
   const closed = room.status !== "open";
   const active = new Set(Object.values(room.launches || {}).filter((l) => ["requested", "started", "joined"].includes(l.state)).map((l) => l.harness));
   const current = select.value;
+  select.disabled = closed;
   if (!byHarness.size) {
     select.innerHTML = '<option value="">No runner online</option>';
     btn.disabled = true;
@@ -445,6 +446,8 @@ function initRoom() {
   es.addEventListener("motion", () => loadRoom(code).catch(() => {}));
   es.addEventListener("launch", () => loadRoom(code).then(() => renderHarnesses(state.room)).catch(() => {}));
   setInterval(() => state.room && renderRoomMeta(state.room), 5_000);
+  // Runners come and go without a room event; refresh the offer list now and then while the room is open.
+  setInterval(() => state.room && state.room.status === "open" && renderHarnesses(state.room).catch(() => {}), 30_000);
 
   $("#hold-btn").addEventListener("click", async () => {
     try {
