@@ -422,10 +422,16 @@ class Cli {
     const runner = new Runner(config, { log: (line) => this.io.out(`${new Date().toISOString()} ${line}`) });
     await runner.start();
     this.io.out(`runner ${config.name}: ${Object.keys(config.harnesses).join(", ")}; state in ${config.stateDir}; Ctrl-C to stop`);
-    const shutdown = () => runner.stop().then(() => process.exit(0));
+    const shutdown = () => {
+      setTimeout(() => process.exit(1), 15_000).unref(); // a harness that ignores SIGTERM gets SIGKILL at 10 s; this is the backstop
+      runner.stop().then(() => process.exit(0)).catch((error) => {
+        this.io.err(`error stopping: ${error.message}`);
+        process.exit(1);
+      });
+    };
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
-    await new Promise(() => {});
+    await new Promise(() => {}); // the runner's connection keeps the process alive until a signal
   }
 }
 
