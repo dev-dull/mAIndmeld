@@ -62,11 +62,21 @@
       </div>
       <div class="panel-box room actions" id="invite-box">
         <h3>Invite</h3>
+        <form class="invite-row" id="invite-model">
+          <select id="model-select" aria-label="Model to invite"><option value="">No model profiles</option></select>
+          <button type="submit" id="model-btn" disabled>Invite</button>
+        </form>
+        <div class="hint" id="model-hint">A configured model answers from the server; no tools of its own.</div>
         <form class="invite-row" id="invite-harness">
           <select id="harness-select" aria-label="Harness to launch"><option value="">No runner online</option></select>
           <button type="submit" class="human-only" id="harness-btn" disabled>Launch</button>
         </form>
         <div class="hint" id="invite-hint">A runner starts the harness on its own machine; it joins with its own tools.</div>
+        <form class="invite-row" id="invite-human">
+          <input id="human-reason" type="text" maxlength="300" placeholder="Why a person is needed (optional)">
+          <button type="submit" id="human-btn">Call a human</button>
+        </form>
+        <div class="hint">Flags the room as needing a person and sends the configured notifiers.</div>
       </div>
       <div class="panel-box room" id="motion-box">
         <h3>Motions</h3>

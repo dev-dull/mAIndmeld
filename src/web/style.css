@@ -243,6 +243,13 @@ aside.panel { display: flex; flex-direction: column; gap: 1rem; overflow-y: auto
 .invite-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.4rem; }
 .invite-row select { min-width: 0; width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 0.4rem 0.5rem; font: inherit; color: inherit; }
 .hint { font-size: 0.75rem; color: var(--muted); margin-top: 0.35rem; }
+.invite-row + .hint { margin-bottom: 0.6rem; }
+.invite-row input { min-width: 0; }
+fieldset.models { border: 1px solid var(--line); border-radius: 6px; padding: 0.5rem 0.75rem 0.6rem; margin: 0; }
+fieldset.models legend { font-size: 0.85rem; color: var(--muted); padding: 0 0.3rem; }
+fieldset.models .checks { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; }
+fieldset.models label { display: inline-flex; align-items: center; gap: 0.35rem; color: inherit; font-size: 0.9rem; }
+fieldset.models input { width: auto; }
 .actions { display: flex; flex-direction: column; gap: 0.4rem; }
 .actions button { text-align: left; }
 .toggle.on { background: var(--tint); border-color: var(--accent); }

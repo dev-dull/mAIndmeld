@@ -40,6 +40,10 @@
         <form class="create" id="create-form">
           <label>Title <input id="new-title" required maxlength="160" placeholder="Export command contract"></label>
           <label>Objective <textarea id="new-objective" maxlength="4000" placeholder="What should this meeting settle?"></textarea></label>
+          <fieldset class="models hidden" id="new-models">
+            <legend>Invite models</legend>
+            <div class="checks" id="new-models-list"></div>
+          </fieldset>
           <button class="primary" type="submit">Create room</button>
         </form>
       </section>

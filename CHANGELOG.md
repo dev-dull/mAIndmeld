@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Room page: the Invite box gains a model row (configured profiles, with
+  those in the room marked and the health hint shown) and a call-a-human
+  row; the lobby's create form lists profiles as checkboxes (#46). Health's
+  profile report carries `display_name`.
+
 ## [0.5.0] - 2026-09-25
 
 ### Added

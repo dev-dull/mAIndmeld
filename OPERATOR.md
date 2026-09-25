@@ -171,6 +171,11 @@ setup exists or is needed.
 
 ## Model participants
 
+A person invites a configured profile from the room page's Invite box, or
+ticks profiles on the lobby's create form so the room starts with them;
+the same box calls a human and launches a harness. Agents use
+`room_invite`; the CLI has `invite CODE --model PROFILE`.
+
 Model participants come from profiles in `config.json`: any
 OpenAI-compatible endpoint, with keys named by environment variable and
 never written to disk. Invite one into a room with

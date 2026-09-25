@@ -120,6 +120,11 @@ async function renderLobby() {
 function initLobby() {
   whoAmI().catch(() => {});
   renderLobby().catch((e) => toast(e.message));
+  fetchProfiles().then((profiles) => {
+    if (!profiles.length) return;
+    $("#new-models-list").innerHTML = profiles.map((p) => `<label><input type="checkbox" name="invite_models" value="${esc(p.key)}"> ${esc(p.name)} <span class="badge model">${esc(p.model)}</span></label>`).join("");
+    $("#new-models").classList.remove("hidden");
+  }).catch(() => {});
   // Anywhere on a card opens the room, except an actual link inside it.
   document.addEventListener("click", (e) => {
     const card = e.target.closest(".room-card");
@@ -150,7 +155,8 @@ function initLobby() {
   $("#create-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     try {
-      const { room } = await api("POST", "/api/rooms", { title: $("#new-title").value, objective: $("#new-objective").value });
+      const invite_models = [...document.querySelectorAll('#new-models-list input:checked')].map((i) => i.value);
+      const { room } = await api("POST", "/api/rooms", { title: $("#new-title").value, objective: $("#new-objective").value, invite_models: invite_models.length ? invite_models : undefined });
       location.href = `/rooms/${room.code}`;
     } catch (error) {
       toast(error.message);
@@ -404,6 +410,41 @@ function renderRoomMeta(room) {
   renderMotions(room);
 }
 
+// The configured model profiles, from the health endpoint (display names only; nothing secret lives there).
+async function fetchProfiles() {
+  try {
+    const health = await (await fetch("/api/health", { credentials: "same-origin" })).json();
+    return Object.entries(health.profiles || {}).map(([key, p]) => ({ key, name: p.display_name || key, model: p.model, hint: p.hint || null, calls_last_hour: p.calls_last_hour, max_calls_per_hour: p.max_calls_per_hour })).sort((a, b) => a.name.localeCompare(b.name));
+  } catch {
+    return [];
+  }
+}
+
+// The Invite box's model row: configured profiles, with those already in the room marked.
+async function renderProfiles(room) {
+  const select = $("#model-select");
+  const btn = $("#model-btn");
+  if (!select) return;
+  const profiles = state.profiles || (state.profiles = await fetchProfiles());
+  const closed = room.status !== "open";
+  const present = new Set(room.participants.filter((p) => p.kind === "model").map((p) => (p.client || "").toLowerCase()));
+  const current = select.value;
+  select.disabled = closed;
+  if (!profiles.length) {
+    select.innerHTML = '<option value="">No model profiles configured</option>';
+    btn.disabled = true;
+    return;
+  }
+  select.innerHTML = profiles.map((p) => {
+    const here = present.has(p.key.toLowerCase());
+    const capped = p.max_calls_per_hour && p.calls_last_hour >= p.max_calls_per_hour;
+    return `<option value="${esc(p.key)}"${here ? " disabled" : ""}>${esc(p.name)} (${esc(p.model)})${here ? " · in the room" : capped ? " · at its hourly cap" : ""}</option>`;
+  }).join("");
+  if (profiles.some((p) => p.key === current)) select.value = current;
+  btn.disabled = closed || !select.value || present.has(select.value.toLowerCase());
+  $("#model-hint").textContent = profiles.find((p) => p.key === select.value)?.hint || "A configured model answers from the server; no tools of its own.";
+}
+
 // Typing @ in the composer lists the room's participants; the list follows the
 // word under the caret, and Enter or Tab inserts the chosen name.
 function initAutocomplete(textarea, participants) {
@@ -520,6 +561,7 @@ async function loadRoom(code) {
     state.harnessesLoaded = true;
     renderHarnesses(room).catch(() => {});
   }
+  renderProfiles(room).catch(() => {});
   for (const m of room.messages) renderMessage(m);
   $("#transcript").scrollTop = $("#transcript").scrollHeight;
 }
@@ -632,6 +674,33 @@ function initRoom() {
     }
   });
   $("#harness-select").addEventListener("change", () => renderHarnesses(state.room).catch(() => {}));
+  $("#model-select").addEventListener("change", () => renderProfiles(state.room).catch(() => {}));
+  $("#invite-model").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const profile = $("#model-select").value;
+    if (!profile) return;
+    try {
+      await ensureJoined(code);
+      const r = await api("POST", `/api/rooms/${code}/invite`, { kind: "model", profile });
+      toast(r.rejoined ? `${r.participant.name} is already here` : `${r.participant.name} joined`);
+      await loadRoom(code);
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+  $("#invite-human").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await ensureJoined(code);
+      const reason = $("#human-reason").value.trim();
+      await api("POST", `/api/rooms/${code}/invite`, { kind: "human", reason: reason || undefined });
+      $("#human-reason").value = "";
+      toast("The room now asks for a person");
+      await loadRoom(code);
+    } catch (error) {
+      toast(error.message);
+    }
+  });
   $("#leave-btn").addEventListener("click", () => api("POST", `/api/rooms/${code}/leave`, {}).catch((e) => toast(e.message)));
   $("#mode-btn").addEventListener("click", async () => {
     const next = state.room.response_mode === "addressed_only" ? "open" : "addressed_only";

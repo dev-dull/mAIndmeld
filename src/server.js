@@ -579,6 +579,7 @@ export function createApp(config = loadConfig()) {
       else if (s.waits > 0) hint = `${s.waits} wait${s.waits === 1 ? "" : "s"} granted; consider a longer timeout_ms or vote window`;
       out[key] = {
         model: p.model,
+        display_name: p.displayName,
         vision: p.vision,
         timeout_ms: p.timeoutMs,
         max_calls_per_hour: p.maxCallsPerHour,
