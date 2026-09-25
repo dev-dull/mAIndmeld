@@ -16,7 +16,7 @@ room transcript when you do.
 
 | Harness | Status | Notes |
 |---|---|---|
-| Claude Code | verified 2026-09-24 (2.1.281), transcript in `verified/claude-code.md` | `claude -p` with `--mcp-config {templates}/claude-code.mcp.json`; the config expands `${MAINDMELD_MCP_URL}` and `${MAINDMELD_TOKEN}`. `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` are removed from the environment (a `null` in `env`) so a runner started from inside Claude Code can still launch it. |
+| Claude Code | verified 2026-09-24 (2.1.281), transcript in `verified/claude-code.md` | `claude -p` with `--mcp-config {templates}/claude-code.mcp.json`; the config expands `${MAINDMELD_MCP_URL}` and `${MAINDMELD_TOKEN}`. `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` are removed from the environment (a `null` in `env`) so a runner started from inside Claude Code can still launch it. The entry pins `--model claude-sonnet-5`; without it, headless Claude Code uses the key's default, which may be the most expensive model. |
 | OpenCode | from the documentation | `opencode run` with `OPENCODE_CONFIG` pointing at `opencode.json`, whose remote MCP entry uses `{env:...}` substitution. Headless runs can wait for a tool permission; if yours does, add the permission rule OpenCode documents for MCP tools. |
 | Gemini CLI | from the documentation | `gemini -p` with the MCP server in a settings file named by `GEMINI_CLI_SYSTEM_SETTINGS_PATH`; `$VAR` expands in settings. Gemini CLI has web search built in. |
 | Codex CLI | from the documentation | `codex exec` with `CODEX_HOME` pointing at `codex-home/`, whose `config.toml` names the bearer token's environment variable. |

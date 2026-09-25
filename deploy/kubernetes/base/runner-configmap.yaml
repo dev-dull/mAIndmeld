@@ -14,7 +14,7 @@ data:
       "max_concurrent": 2,
       "harnesses": {
         "claude-code": {
-          "command": ["claude", "-p", "{prompt}", "--mcp-config", "{templates}/claude-code.mcp.json", "--strict-mcp-config", "--allowedTools", "mcp__maindmeld__*", "--max-turns", "60"],
+          "command": ["claude", "-p", "{prompt}", "--mcp-config", "{templates}/claude-code.mcp.json", "--strict-mcp-config", "--allowedTools", "mcp__maindmeld__*", "--max-turns", "60", "--model", "claude-sonnet-5"],
           "env": { "CLAUDECODE": null, "CLAUDE_CODE_ENTRYPOINT": null },
           "timeout_minutes": 120
         },
