@@ -96,7 +96,9 @@ function initNote() {
       `<span>${(meeting.decisions || []).length} decisions</span>`,
       `<span>${(meeting.topics || []).map((t) => `<span class="badge status">${esc(t)}</span>`).join(" ")}</span>`,
     ].join("");
-    $("#note").textContent = meeting.markdown.replace(/^---[\s\S]*?---\n\n?/, "");
+    const body = meeting.markdown.replace(/^---[\s\S]*?---\n\n?/, "");
+    if (window.renderMarkdown) $("#note").innerHTML = window.renderMarkdown(body);
+    else $("#note").textContent = body;
   }).catch((e) => { $("#note").textContent = e.message; });
 }
 
@@ -216,6 +218,13 @@ function updateMessage(m) {
 
 const captionText = (a) => (a.caption_auto ? `${a.caption} · ${a.caption_auto}` : a.caption || "image");
 
+// The body as Markdown (models and agents write it, people paste it); plain escaped text if the renderer is missing.
+function bodyHtml(m, decorate = null) {
+  if (window.renderMarkdown) return `<div class="md">${window.renderMarkdown(m.content, { decorate })}</div>`;
+  const text = esc(m.content);
+  return `<div class="text">${decorate ? decorate(text) : text}</div>`;
+}
+
 function renderMessage(m) {
   if (state.seen.has(m.id)) return;
   state.seen.add(m.id);
@@ -226,12 +235,12 @@ function renderMessage(m) {
     el.innerHTML = `<div>${esc(m.content)}</div>`;
   } else if (m.kind === "summary") {
     el.className = "msg summary";
-    el.innerHTML = `<div class="head"><span class="name">${esc(m.sender)}</span><span class="badge status">closed</span><span class="time">${timeOf(m.created_at)}</span></div><div class="body">${esc(m.content)}</div>`;
+    el.innerHTML = `<div class="head"><span class="name">${esc(m.sender)}</span><span class="badge status">closed</span><span class="time">${timeOf(m.created_at)}</span></div><div class="body">${bodyHtml(m)}</div>`;
   } else {
     el.className = `msg ${m.kind}`;
     el.innerHTML = `<div class="avatar">${esc(m.sender.slice(0, 1).toUpperCase())}</div><div>
       <div class="head"><span class="name">${esc(m.sender)}</span><span class="badge ${m.kind}">${m.kind}</span><span class="time">${timeOf(m.created_at)}</span>${m.provisional ? '<span class="provisional">provisional</span>' : ""}</div>
-      <div class="body">${esc(m.content)}${attachmentHtml(m)}</div></div>`;
+      <div class="body">${bodyHtml(m)}${attachmentHtml(m)}</div></div>`;
   }
   const t = $("#transcript");
   const atBottom = t.scrollHeight - t.scrollTop - t.clientHeight < 40;
