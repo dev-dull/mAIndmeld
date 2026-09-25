@@ -24,7 +24,7 @@
 
 services:
   maindmeld:
-    image: ghcr.io/dev-dull/maindmeld:0.5.1
+    image: ghcr.io/dev-dull/maindmeld:0.5.2
     build: .
     ports:
       - "7340:7340"
@@ -44,7 +44,7 @@ services:
 
   runner:
     profiles: ["runner"]
-    image: ghcr.io/dev-dull/maindmeld-runner:0.5.1
+    image: ghcr.io/dev-dull/maindmeld-runner:0.5.2
     build:
       context: .
       dockerfile: Dockerfile.runner

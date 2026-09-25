@@ -446,7 +446,7 @@ export async function run(argv = process.argv.slice(2)) {
   // The runner is not a server: it needs no server config, and must not fail on
   // server-side environment it does not own (a Kubernetes service link, say).
   const config = command === "runner"
-    ? { dataDir: flags["data-dir"] || process.env.MAINDMELD_DATA_DIR || path.join(os.homedir(), ".maindmeld") }
+    ? { dataDir: flags["data-dir"] || process.env.MAINDMELD_DATA_DIR || path.join(os.homedir(), ".maindmeld"), bind: "127.0.0.1", port: 7340, loopback: true }
     : loadConfig({ dataDir: flags["data-dir"], port: flags.port, bind: flags.bind });
   const cli = new Cli(config);
   cli.flags = flags;

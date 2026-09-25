@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-09-25
+
 ### Fixed
 - `MAINDMELD_PORT` and `MAINDMELD_BIND` values of the form `tcp://...`,
   which Kubernetes injects into every pod in a namespace with a Service
@@ -187,7 +189,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Notifiers: webhook, ntfy, desktop.
 - Docker image, compose demo, CI, security policy.
 
-[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.2
 [0.5.1]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.1
 [0.5.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.0
 [0.4.4]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.4
