@@ -171,6 +171,13 @@ label { font-size: 0.85rem; color: var(--muted); display: grid; gap: 0.25rem; }
 .msg.system { grid-template-columns: 1fr; text-align: center; color: var(--system); font-size: 0.85rem; padding: 0.25rem 0; background: transparent; border: 0; }
 .msg.summary { grid-template-columns: 1fr; background: var(--tint); border-radius: 8px; padding: 0.6rem 0.9rem; }
 .msg .provisional { color: var(--warn); font-size: 0.75rem; }
+/* A mention of a participant: coloured by kind, clickable to find them in the panel. */
+.mention { font-weight: 600; color: var(--agent); cursor: pointer; border-radius: 3px; padding: 0 0.1rem; }
+.mention.human { color: var(--human); }
+.mention.model { color: var(--model); }
+.mention.me { background: var(--warn-tint); color: var(--warn); }
+.msg.mentions-me { background: var(--warn-tint); border-color: var(--warn); }
+.person.flash { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 /* Rendered Markdown inside a message or a note. */
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }

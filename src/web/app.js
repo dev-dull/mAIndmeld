@@ -218,8 +218,24 @@ function updateMessage(m) {
 
 const captionText = (a) => (a.caption_auto ? `${a.caption} · ${a.caption_auto}` : a.caption || "image");
 
+// Wrap @mentions of actual participants in already-escaped prose. The server
+// resolved them when the message was sent (m.mentions), so only real names match.
+function mentionDecorator(m) {
+  const names = m.mentions || [];
+  if (!names.length) return null;
+  const kinds = new Map((state.room?.participants || []).map((p) => [p.name.toLowerCase(), p.kind]));
+  const me = state.me?.name?.toLowerCase();
+  const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`(^|[^\\p{L}\\p{N}_])@(${names.map((n) => escapeRe(esc(n))).join("|")})(?=$|[^\\p{L}\\p{N}_])`, "giu");
+  return (text) => text.replace(re, (all, before, name) => {
+    const kind = kinds.get(name.toLowerCase()) || "agent";
+    const mine = me && name.toLowerCase() === me ? " me" : "";
+    return `${before}<span class="mention ${kind}${mine}" data-person="${name}" title="${kind}">@${name}</span>`;
+  });
+}
+
 // The body as Markdown (models and agents write it, people paste it); plain escaped text if the renderer is missing.
-function bodyHtml(m, decorate = null) {
+function bodyHtml(m, decorate = mentionDecorator(m)) {
   if (window.renderMarkdown) return `<div class="md">${window.renderMarkdown(m.content, { decorate })}</div>`;
   const text = esc(m.content);
   return `<div class="text">${decorate ? decorate(text) : text}</div>`;
@@ -230,6 +246,8 @@ function renderMessage(m) {
   state.seen.add(m.id);
   const el = document.createElement("article");
   el.dataset.messageId = m.id;
+  const me = state.me?.name?.toLowerCase();
+  const mentionsMe = Boolean(me && (m.mentions || []).some((n) => n.toLowerCase() === me));
   if (m.kind === "system") {
     el.className = "msg system";
     el.innerHTML = `<div>${esc(m.content)}</div>`;
@@ -241,6 +259,16 @@ function renderMessage(m) {
     el.innerHTML = `<div class="avatar">${esc(m.sender.slice(0, 1).toUpperCase())}</div><div>
       <div class="head"><span class="name">${esc(m.sender)}</span><span class="badge ${m.kind}">${m.kind}</span><span class="time">${timeOf(m.created_at)}</span>${m.provisional ? '<span class="provisional">provisional</span>' : ""}</div>
       <div class="body">${bodyHtml(m)}${attachmentHtml(m)}</div></div>`;
+  }
+  if (mentionsMe) el.classList.add("mentions-me");
+  for (const span of el.querySelectorAll(".mention[data-person]")) {
+    span.addEventListener("click", () => {
+      const row = [...document.querySelectorAll("#people .person")].find((p) => (p.dataset.person || "").toLowerCase() === span.dataset.person.toLowerCase());
+      if (!row) return;
+      row.scrollIntoView({ block: "nearest" });
+      row.classList.add("flash");
+      setTimeout(() => row.classList.remove("flash"), 1200);
+    });
   }
   const t = $("#transcript");
   const atBottom = t.scrollHeight - t.scrollTop - t.clientHeight < 40;
@@ -356,7 +384,7 @@ function renderRoomMeta(room) {
         const age = now - Date.parse(p.last_seen_at);
         const dot = age < 90_000 ? "live" : age < 600_000 ? "idle" : "";
         const more = motionOpen && p.kind !== "human" ? `<button class="small" data-more="${esc(p.name)}">give time</button>` : "";
-        return `<div class="person"><span class="dot ${dot}"></span><span>${esc(p.name)}</span><span class="badge ${p.kind}">${p.kind}</span>${more}</div>`;
+        return `<div class="person" data-person="${esc(p.name)}"><span class="dot ${dot}"></span><span>${esc(p.name)}</span><span class="badge ${p.kind}">${p.kind}</span>${more}</div>`;
       }).join("")
     : '<div class="empty">Nobody here.</div>';
   for (const btn of $("#people").querySelectorAll("button[data-more]")) {
