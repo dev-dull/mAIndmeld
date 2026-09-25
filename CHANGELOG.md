@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-25
+
 ### Added
 - Tokens may carry an expiry and a room scope; the server mints one per
   harness launch, refuses it outside its room, revokes it when the launch
@@ -163,7 +165,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Notifiers: webhook, ntfy, desktop.
 - Docker image, compose demo, CI, security policy.
 
-[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.0
 [0.4.4]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.4
 [0.4.3]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.3
 [0.4.2]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.2
