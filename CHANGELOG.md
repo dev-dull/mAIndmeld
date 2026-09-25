@@ -6,11 +6,19 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-25
+
 ### Added
 - Room page: the Invite box gains a model row (configured profiles, with
   those in the room marked and the health hint shown) and a call-a-human
   row; the lobby's create form lists profiles as checkboxes (#46). Health's
   profile report carries `display_name`.
+- Room page: messages and the note page render Markdown with a small
+  dependency-free renderer that escapes first (#43); @mentions of
+  participants are highlighted and clickable, with the card tinted when
+  the signed-in person is named (#41); typing @ in the composer
+  autocompletes participants (#42); the room takes the window's width
+  while prose keeps a readable measure (#45).
 
 ## [0.5.0] - 2026-09-25
 
@@ -171,7 +179,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Notifiers: webhook, ntfy, desktop.
 - Docker image, compose demo, CI, security policy.
 
-[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.1
 [0.5.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.0
 [0.4.4]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.4
 [0.4.3]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.3
