@@ -14,6 +14,11 @@ spec:
       labels:
         app.kubernetes.io/name: maindmeld-runner
     spec:
+      # No Kubernetes API access, and no service-link environment: with a Service
+      # named "maindmeld" in the namespace the kubelet would inject MAINDMELD_PORT
+      # and friends, which look like our settings and are not.
+      automountServiceAccountToken: false
+      enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

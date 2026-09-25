@@ -6,6 +6,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `MAINDMELD_PORT` and `MAINDMELD_BIND` values of the form `tcp://...`,
+  which Kubernetes injects into every pod in a namespace with a Service
+  named `maindmeld`, are ignored with a warning instead of crashing at
+  start; the `runner` command no longer loads server config at all. Both
+  Kubernetes Deployments set `enableServiceLinks: false`. Seen on the
+  first cluster roll of the runner, where the runner pod crash-looped.
+
 ## [0.5.1] - 2026-09-25
 
 ### Added

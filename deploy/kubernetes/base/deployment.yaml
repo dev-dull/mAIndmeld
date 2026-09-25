@@ -16,6 +16,8 @@ spec:
       labels:
         app.kubernetes.io/name: maindmeld
     spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

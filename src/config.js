@@ -59,8 +59,14 @@ export function loadConfig(overrides = {}, env = process.env) {
   const file = readConfigFile(configFile);
   const fileLimits = file.limits && typeof file.limits === "object" ? file.limits : {};
 
-  const bind = overrides.bind || env.MAINDMELD_BIND || file.bind || DEFAULTS.bind;
-  const port = intFrom(overrides.port ?? env.MAINDMELD_PORT ?? file.port, DEFAULTS.port, "port");
+  // Kubernetes injects MAINDMELD_PORT=tcp://<ip>:<port> (and MAINDMELD_SERVICE_*) into
+  // every pod in a namespace with a Service named "maindmeld": Docker-style service
+  // links. Those are not our settings; ignore them with a warning rather than crash.
+  const serviceLink = (value) => typeof value === "string" && /^tcp:\/\//i.test(value);
+  const envPort = serviceLink(env.MAINDMELD_PORT) ? undefined : env.MAINDMELD_PORT;
+  const envBind = serviceLink(env.MAINDMELD_BIND) ? undefined : env.MAINDMELD_BIND;
+  const bind = overrides.bind || envBind || file.bind || DEFAULTS.bind;
+  const port = intFrom(overrides.port ?? envPort ?? file.port, DEFAULTS.port, "port");
   const configuredOrigin = overrides.publicOrigin || env.MAINDMELD_PUBLIC_ORIGIN || file.public_origin || null;
 
   const limits = {
@@ -78,6 +84,7 @@ export function loadConfig(overrides = {}, env = process.env) {
   // same server answers on several spellings of its own address.
   const origins = new Set();
   const warnings = [];
+  if (serviceLink(env.MAINDMELD_PORT)) warnings.push(`ignoring MAINDMELD_PORT=${env.MAINDMELD_PORT}: that is a Kubernetes service link, not a port; set enableServiceLinks: false on the pod or set the port explicitly`);
   if (configuredOrigin) origins.add(configuredOrigin.replace(/\/$/, ""));
   if (isLoopback(bind) || !configuredOrigin) {
     // Loopback, or a wide bind with nothing configured (the plain

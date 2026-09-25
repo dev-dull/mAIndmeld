@@ -2,6 +2,7 @@
 // configured human from a terminal. DESIGN.md section 14.
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -442,7 +443,11 @@ export async function run(argv = process.argv.slice(2)) {
     console.log(USAGE);
     return;
   }
-  const config = loadConfig({ dataDir: flags["data-dir"], port: flags.port, bind: flags.bind });
+  // The runner is not a server: it needs no server config, and must not fail on
+  // server-side environment it does not own (a Kubernetes service link, say).
+  const config = command === "runner"
+    ? { dataDir: flags["data-dir"] || process.env.MAINDMELD_DATA_DIR || path.join(os.homedir(), ".maindmeld") }
+    : loadConfig({ dataDir: flags["data-dir"], port: flags.port, bind: flags.bind });
   const cli = new Cli(config);
   cli.flags = flags;
   const commands = {

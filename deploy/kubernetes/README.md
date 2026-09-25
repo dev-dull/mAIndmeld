@@ -56,6 +56,14 @@ no Docker socket, and starts harnesses as processes in its own pod;
 sandboxing beyond that is yours. If you do not want a runner, remove the
 three runner files from `base/kustomization.yaml` in your own overlay.
 
+Disk: the runner image is about 1.1 GB, most of it the two harnesses,
+and it lands on every node the runner pod can schedule to. Check the
+nodes' free space before adding the runner to a tight cluster; a node
+near its eviction threshold will start evicting pods when the image
+pulls. Both Deployments set `enableServiceLinks: false`, since a Service
+named `maindmeld` makes the kubelet inject `MAINDMELD_PORT=tcp://...`
+into every pod in the namespace, which is not a port.
+
 ## Tokens
 
 The first start with no tokens prints one named `bootstrap`. Use it once

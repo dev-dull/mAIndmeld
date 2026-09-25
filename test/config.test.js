@@ -60,3 +60,17 @@ test("isLoopback", () => {
   assert.equal(isLoopback("::1"), true);
   assert.equal(isLoopback("0.0.0.0"), false);
 });
+
+test("a Kubernetes service link in MAINDMELD_PORT or MAINDMELD_BIND is ignored with a warning, not parsed", () => {
+  const dir = tmpDataDir();
+  try {
+    const config = loadConfig({ dataDir: dir }, { MAINDMELD_PORT: "tcp://10.110.91.106:80", MAINDMELD_BIND: "tcp://10.110.91.106:80", USER: "t" });
+    assert.equal(config.port, 7340);
+    assert.equal(config.bind, "127.0.0.1");
+    assert.ok(config.warnings.some((w) => /service link/.test(w)), JSON.stringify(config.warnings));
+    const real = loadConfig({ dataDir: dir }, { MAINDMELD_PORT: "7341", USER: "t" });
+    assert.equal(real.port, 7341);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
