@@ -435,7 +435,12 @@ export function createApp(config = loadConfig()) {
     // Replay what this runner has not claimed yet. Synchronous room loads, one per room
     // with an active launch; that set is small by construction (launches end within minutes).
     for (const code of launchRooms) {
-      const room = store.loadRoom(code);
+      let room = null;
+      try {
+        room = store.loadRoom(code);
+      } catch (error) {
+        log(`runner ${clean}: could not replay launches of ${code}: ${error.message}`);
+      }
       if (!room) continue;
       for (const l of rooms.activeLaunches(room)) {
         if (l.state === "requested" && l.runner === clean) res.write(`event: launch\ndata: ${JSON.stringify(launchEventData(room, l))}\n\n`);
@@ -1239,10 +1244,12 @@ export function createApp(config = loadConfig()) {
       if (!code) throw new HttpError(404, `no active launch ${id}`);
       const state = String(body.state ?? "");
       if (state !== "exited" && state !== "failed") throw new HttpError(400, "state must be exited or failed");
-      const current = store.loadRoom(code)?.launches?.[id];
-      if (!current) throw new HttpError(404, `no active launch ${id}`);
-      requireRunnerToken(principal, current.runner);
-      const { result, room } = await mutateAndPublish(code, (room) => rooms.endLaunch(room, id, { state, reason: body.reason, exit_code: body.exit_code }));
+      const { result, room } = await mutateAndPublish(code, (room) => {
+        const current = room.launches?.[id];
+        if (!current) throw new HttpError(404, `no active launch ${id}`);
+        requireRunnerToken(principal, current.runner); // inside the queue, so the binding it checks is the one being ended
+        return rooms.endLaunch(room, id, { state, reason: body.reason, exit_code: body.exit_code });
+      });
       auth.revokeScoped(code, { launch: id });
       launchIndex.delete(id);
       runners.get(result.launch.runner)?.active.delete(id);
