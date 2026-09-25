@@ -47,6 +47,16 @@ follow [Semantic Versioning](https://semver.org/).
   effective window; single messages over 4,000 characters are clipped in
   the model's view (#28).
 
+## [0.4.4] - 2026-09-25
+
+### Fixed
+- A model participant that gets a 413, or a 400 naming a length or token
+  limit, now halves its transcript window and retries at once instead of
+  counting a failure toward a ten-minute pause; the window creeps back by
+  one message per reply. Profiles take `max_prompt_chars`; health shows the
+  effective window; single messages over 4,000 characters are clipped in
+  the model's view (#28).
+
 ## [0.4.3] - 2026-09-22
 
 ### Changed
@@ -153,7 +163,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Notifiers: webhook, ntfy, desktop.
 - Docker image, compose demo, CI, security policy.
 
-[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.4
 [0.4.3]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.3
 [0.4.2]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.2
 [0.4.1]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.4.1
