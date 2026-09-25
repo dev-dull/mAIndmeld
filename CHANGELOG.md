@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- The room page's Invite box no longer offers "Call a human": the person
+  on the page is the human. Agents still call one with `room_invite`.
+
 ## [0.5.2] - 2026-09-25
 
 ### Fixed

@@ -688,19 +688,6 @@ function initRoom() {
       toast(error.message);
     }
   });
-  $("#invite-human").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    try {
-      await ensureJoined(code);
-      const reason = $("#human-reason").value.trim();
-      await api("POST", `/api/rooms/${code}/invite`, { kind: "human", reason: reason || undefined });
-      $("#human-reason").value = "";
-      toast("The room now asks for a person");
-      await loadRoom(code);
-    } catch (error) {
-      toast(error.message);
-    }
-  });
   $("#leave-btn").addEventListener("click", () => api("POST", `/api/rooms/${code}/leave`, {}).catch((e) => toast(e.message)));
   $("#mode-btn").addEventListener("click", async () => {
     const next = state.room.response_mode === "addressed_only" ? "open" : "addressed_only";
