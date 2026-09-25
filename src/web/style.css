@@ -236,6 +236,10 @@ aside.panel { display: flex; flex-direction: column; gap: 1rem; overflow-y: auto
 .launch .state.joined { color: var(--ok); }
 .launch .state.failed, .launch .state.timed_out { color: var(--danger); }
 .launch .state.exited, .launch .state.cancelled { color: var(--muted); }
+/* Participant autocomplete above the composer while a person types @. */
+.autocomplete { display: grid; gap: 0.1rem; padding: 0.3rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; max-width: 24rem; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15); }
+.autocomplete .option { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0.5rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem; }
+.autocomplete .option.active, .autocomplete .option:hover { background: var(--tint); }
 .invite-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.4rem; }
 .invite-row select { min-width: 0; width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 0.4rem 0.5rem; font: inherit; color: inherit; }
 .hint { font-size: 0.75rem; color: var(--muted); margin-top: 0.35rem; }

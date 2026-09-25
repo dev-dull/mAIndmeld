@@ -403,6 +403,69 @@ function renderRoomMeta(room) {
   renderMotions(room);
 }
 
+// Typing @ in the composer lists the room's participants; the list follows the
+// word under the caret, and Enter or Tab inserts the chosen name.
+function initAutocomplete(textarea, participants) {
+  const box = $("#autocomplete");
+  const order = { human: 0, agent: 1, model: 2 };
+  let items = [];
+  let index = 0;
+  let range = null; // [start, end] of the @word being completed
+  const close = () => {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    items = [];
+    range = null;
+  };
+  const render = () => {
+    box.innerHTML = items.map((p, i) => `<div class="option${i === index ? " active" : ""}" role="option" data-i="${i}"><span>@${esc(p.name)}</span><span class="badge ${p.kind}">${p.kind}</span></div>`).join("");
+    box.classList.toggle("hidden", !items.length);
+  };
+  const insert = (p) => {
+    if (!range) return;
+    const v = textarea.value;
+    const replacement = `@${p.name} `;
+    textarea.value = v.slice(0, range[0]) + replacement + v.slice(range[1]);
+    const caret = range[0] + replacement.length;
+    textarea.setSelectionRange(caret, caret);
+    close();
+    textarea.focus();
+  };
+  const update = () => {
+    const caret = textarea.selectionStart;
+    const before = textarea.value.slice(0, caret);
+    const m = before.match(/(^|[^\p{L}\p{N}_])@([\p{L}\p{N}_.-]*)$/u);
+    if (!m) return close();
+    const prefix = m[2].toLowerCase();
+    const start = caret - m[2].length - 1;
+    items = participants().filter((p) => p.name.toLowerCase().startsWith(prefix)).sort((a, b) => (order[a.kind] ?? 3) - (order[b.kind] ?? 3) || a.name.localeCompare(b.name)).slice(0, 8);
+    if (!items.length) return close();
+    range = [start, caret];
+    index = Math.min(index, items.length - 1);
+    render();
+  };
+  textarea.addEventListener("input", update);
+  textarea.addEventListener("click", update);
+  textarea.addEventListener("blur", () => setTimeout(close, 150));
+  box.addEventListener("mousedown", (e) => {
+    const opt = e.target.closest(".option");
+    if (!opt) return;
+    e.preventDefault();
+    insert(items[Number(opt.dataset.i)]);
+  });
+  return {
+    /** Returns true when the key was consumed by the list. */
+    handleKey(e) {
+      if (!items.length || box.classList.contains("hidden")) return false;
+      if (e.key === "ArrowDown") { index = (index + 1) % items.length; render(); e.preventDefault(); return true; }
+      if (e.key === "ArrowUp") { index = (index - 1 + items.length) % items.length; render(); e.preventDefault(); return true; }
+      if (e.key === "Enter" || e.key === "Tab") { insert(items[index]); e.preventDefault(); return true; }
+      if (e.key === "Escape") { close(); e.preventDefault(); return true; }
+      return false;
+    },
+  };
+}
+
 // Harness launches in this room: one line per launch with its state; active ones first.
 function renderLaunches(room) {
   const el = $("#launches");
@@ -544,7 +607,9 @@ function initRoom() {
       $("#composer").requestSubmit();
     }
   });
+  const ac = initAutocomplete($("#composer textarea"), () => state.room?.participants || []);
   $("#composer textarea").addEventListener("keydown", (e) => {
+    if (ac.handleKey(e)) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       $("#composer").requestSubmit();
