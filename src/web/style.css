@@ -167,7 +167,7 @@ label { font-size: 0.85rem; color: var(--muted); display: grid; gap: 0.25rem; }
 .msg .body { overflow-wrap: anywhere; }
 /* Prose keeps a readable measure inside a wide column; images and code may use all of it. */
 .msg .body .text { max-width: 100ch; white-space: pre-wrap; }
-.msg .body .md { max-width: 100ch; }
+.msg .body .md p, .msg .body .md li, .msg .body .md blockquote, .msg .body .md h4, .msg .body .md h5, .msg .body .md h6 { max-width: 100ch; }
 .msg.system { grid-template-columns: 1fr; text-align: center; color: var(--system); font-size: 0.85rem; padding: 0.25rem 0; background: transparent; border: 0; }
 .msg.summary { grid-template-columns: 1fr; background: var(--tint); border-radius: 8px; padding: 0.6rem 0.9rem; }
 .msg .provisional { color: var(--warn); font-size: 0.75rem; }

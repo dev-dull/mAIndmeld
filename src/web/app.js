@@ -223,8 +223,9 @@ const captionText = (a) => (a.caption_auto ? `${a.caption} · ${a.caption_auto}`
 function mentionDecorator(m) {
   const names = m.mentions || [];
   if (!names.length) return null;
-  const kinds = new Map((state.room?.participants || []).map((p) => [p.name.toLowerCase(), p.kind]));
-  const me = state.me?.name?.toLowerCase();
+  // The prose is already escaped, so names are matched and keyed in their escaped form too.
+  const kinds = new Map((state.room?.participants || []).map((p) => [esc(p.name).toLowerCase(), p.kind]));
+  const me = state.me?.name ? esc(state.me.name).toLowerCase() : null;
   const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(`(^|[^\\p{L}\\p{N}_])@(${names.map((n) => escapeRe(esc(n))).join("|")})(?=$|[^\\p{L}\\p{N}_])`, "giu");
   return (text) => text.replace(re, (all, before, name) => {
