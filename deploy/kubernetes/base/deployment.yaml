@@ -30,7 +30,7 @@ spec:
           # Pinned to the multi-arch index digest of the published 0.5.2 image.
           # `docker buildx imagetools inspect ghcr.io/dev-dull/maindmeld:0.5.2`
           # prints the digest for a newer tag; keep the tag for readability.
-          image: ghcr.io/dev-dull/maindmeld:0.5.2@sha256:4d8a88b942a8bc55ba6df563f557233ea77a69b89b1e6edd8ea82eb1d7a46c26
+          image: ghcr.io/dev-dull/maindmeld:0.5.3@sha256:5ef555031c8d412cf56c8d1a6d15973e68c9e13054d51202c77b70c3778cfdf2
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
