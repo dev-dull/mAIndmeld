@@ -6,6 +6,22 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- A model participant that is rate limited now waits as long as the
+  endpoint asks (`Retry-After`, the `x-ratelimit-reset-*` buckets, or a
+  retry hint in the body) instead of retrying within seconds against a
+  per-minute limit and burning the rest of the quota (#58). Up to three
+  attempts in one turn cost one failure between them rather than three, so
+  a limit that clears in a minute no longer pauses the participant for ten
+  (#44). The cooldown belongs to the profile, so every room using it holds
+  back, and `GET /api/health` reports `rate_limited` and
+  `rate_limited_until` separately from failures.
+
+### Added
+- `rate_limit_backoff_ms` on a model profile (default 20000): the first
+  step of the doubling wait used when an endpoint refuses without saying
+  how long to wait.
+
 ## [0.5.3] - 2026-09-26
 
 ### Fixed

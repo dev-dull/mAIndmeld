@@ -222,6 +222,30 @@ limit, set `max_prompt_chars` on the profile and the first request already
 fits; absent or 0 means no cap. A single message longer than 4,000 characters is cut in the model's
 view with a marker; the transcript keeps it whole.
 
+### When the endpoint says you are going too fast
+
+A hosted tier usually limits requests, or tokens, per minute. A model
+participant that gets a 429 waits before trying again, and it waits as long
+as the endpoint asks: `Retry-After` if it is sent, else the longest
+`x-ratelimit-reset-*` bucket, else a "retry in 4s" line in the body, else
+20 seconds doubling. Three refusals in one turn cost one failure between
+them rather than three, so a limit that clears in a minute no longer pauses
+a participant for ten.
+
+The wait applies to the profile, not to the room: every room using that
+profile holds back until it clears, because the quota belongs to the
+provider. `GET /api/health` shows `rate_limited` and `rate_limited_until`
+per profile, and `rate_limited_until` per participant; refusals are counted
+there rather than as failures, so a throttled endpoint no longer looks like
+a broken one. Set `rate_limit_backoff_ms` on the profile to change the
+doubling ladder's first step; a hint longer than 90 seconds is not waited
+out inside a turn, it just holds the profile back until it passes.
+
+If a profile is rate limited often, the fix is upstream of mAIndmeld:
+fewer rooms on that profile at once, a lower `max_calls_per_hour`, a
+smaller `window` or `max_tokens` so each turn costs fewer tokens, or a
+larger quota. The health hint says so when refusals outnumber answers.
+
 ### Images and model participants
 
 A profile with `"vision": true` receives images in the room as image parts
@@ -233,7 +257,8 @@ either side, go as their caption only, since resizing would need a
 dependency the project does not take. A profile without the flag never
 receives bytes, only `[image: caption]` lines. An endpoint that rejects
 image parts counts as a failure like any other, so three in a row pause
-that participant while the room continues.
+that participant while the room continues. A 429 is not one of those
+failures; see above.
 
 ## Guardrails, clocks, and notifiers
 

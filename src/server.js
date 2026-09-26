@@ -547,7 +547,7 @@ export function createApp(config = loadConfig()) {
   function statsFor(key) {
     let s = profileStats.get(key);
     if (!s) {
-      s = { durations: [], calls: 0, failures: 0, timeouts: 0, skipped: 0, waits: 0, callTimes: [] };
+      s = { durations: [], calls: 0, failures: 0, timeouts: 0, skipped: 0, waits: 0, rateLimited: 0, rateLimitedUntil: 0, callTimes: [] };
       profileStats.set(key, s);
     }
     return s;
@@ -564,20 +564,35 @@ export function createApp(config = loadConfig()) {
       s.failures += 1;
       if (event.timeout) s.timeouts += 1;
     }
+    // A rate limit is a call the provider refused, not a call that went wrong.
+    if (event.rateLimited) {
+      s.calls += 1;
+      s.rateLimited += 1;
+    }
+    if (event.cooldownMs) s.rateLimitedUntil = Math.max(s.rateLimitedUntil, Date.now() + event.cooldownMs);
     if (event.wait) s.waits += 1;
     if (event.skipped) s.skipped += 1;
   }
+  /**
+   * May a participant on this profile call the endpoint now? The quota belongs to
+   * the provider, not to one room, so a 429 seen anywhere holds every room on the
+   * profile back until it clears. Consumes an hourly slot when it says yes.
+   */
   function allowCall(key) {
     const limit = config.profiles[key]?.maxCallsPerHour ?? 120;
     const s = statsFor(key);
     const now = Date.now();
+    if (s.rateLimitedUntil > now) {
+      recordProfile(key, { skipped: true });
+      return { ok: false, reason: "rate", retryInMs: s.rateLimitedUntil - now };
+    }
     s.callTimes = s.callTimes.filter((t) => now - t < 3_600_000);
     if (s.callTimes.length >= limit) {
       recordProfile(key, { skipped: true });
-      return false;
+      return { ok: false, reason: "cap" };
     }
     s.callTimes.push(now);
-    return true;
+    return { ok: true };
   }
   function profileReport() {
     const out = {};
@@ -587,7 +602,8 @@ export function createApp(config = loadConfig()) {
       const pick = (q) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] : null);
       const p95 = pick(0.95);
       let hint = null;
-      if (p95 !== null && p95 > p.timeoutMs * 0.8) hint = `p95 ${p95} ms is near timeout_ms ${p.timeoutMs}; consider timeout_ms ${Math.ceil((p95 * 1.5) / 1000) * 1000}`;
+      if (s.rateLimited > 0 && s.rateLimited >= s.calls - s.rateLimited) hint = `${s.rateLimited} of ${s.calls} calls were rate limited; consider a lower max_calls_per_hour, fewer rooms on this profile, or a larger quota`;
+      else if (p95 !== null && p95 > p.timeoutMs * 0.8) hint = `p95 ${p95} ms is near timeout_ms ${p.timeoutMs}; consider timeout_ms ${Math.ceil((p95 * 1.5) / 1000) * 1000}`;
       else if (s.waits > 0) hint = `${s.waits} wait${s.waits === 1 ? "" : "s"} granted; consider a longer timeout_ms or vote window`;
       out[key] = {
         model: p.model,
@@ -595,9 +611,12 @@ export function createApp(config = loadConfig()) {
         vision: p.vision,
         timeout_ms: p.timeoutMs,
         max_calls_per_hour: p.maxCallsPerHour,
+        rate_limit_backoff_ms: p.rateLimitBackoffMs,
         calls: s.calls,
         failures: s.failures,
         timeouts: s.timeouts,
+        rate_limited: s.rateLimited,
+        rate_limited_until: s.rateLimitedUntil > Date.now() ? new Date(s.rateLimitedUntil).toISOString() : null,
         skipped: s.skipped,
         waits: s.waits,
         latency_ms: { p50: pick(0.5), p95, n: sorted.length },
