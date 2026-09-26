@@ -10,11 +10,12 @@ follow [Semantic Versioning](https://semver.org/).
 - A model participant that is rate limited now waits as long as the
   endpoint asks (`Retry-After`, the `x-ratelimit-reset-*` buckets, or a
   retry hint in the body) instead of retrying within seconds against a
-  per-minute limit and burning the rest of the quota (#58). Up to three
-  attempts in one turn cost one failure between them rather than three, so
-  a limit that clears in a minute no longer pauses the participant for ten
-  (#44). The cooldown belongs to the profile, so every room using it holds
-  back, and `GET /api/health` reports `rate_limited` and
+  per-minute limit and burning the rest of the quota (#58). Being throttled
+  is no longer a failure and no longer marks a participant unavailable, so a
+  limit that clears in a minute does not pause it for ten (#44); each turn
+  that ends throttled doubles the wait instead, up to fifteen minutes, and
+  any answer resets it. The cooldown belongs to the profile, so every room
+  using it holds back, and `GET /api/health` reports `rate_limited` and
   `rate_limited_until` separately from failures.
 
 ### Added

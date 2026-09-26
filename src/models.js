@@ -9,6 +9,10 @@ const DEBOUNCE_MS = 1500;
 const RATE_ATTEMPTS = 3;
 /** A hint longer than this is not slept on inside a reply; it becomes a cooldown. */
 const RATE_WAIT_MAX_MS = 90_000;
+/** Ceiling for the cooldown that repeated rate limits escalate towards. */
+const RATE_COOLDOWN_MAX_MS = 15 * 60_000;
+/** A cooldown at least this long is worth telling the room about, once. */
+const RATE_NOTICE_MS = 120_000;
 
 export class ModelError extends Error {
   constructor(message, { status, body, retryAfterMs: hint = null } = {}) {
@@ -217,6 +221,8 @@ export class ModelParticipant {
     this.failures = 0;
     this.pausedUntil = 0;
     this.rateLimitedUntil = 0;
+    this.rateStrikes = 0; // consecutive turns that ended rate limited; reset by any answer
+    this.rateNoticeFor = 0;
     this.lastReplyAt = 0;
     this.timer = null;
     this.busy = false;
@@ -316,7 +322,14 @@ export class ModelParticipant {
         this.rateLimitedUntil = Date.now() + wait;
         this.hooks.record?.(this.profileKey, { rateLimited: true, cooldownMs: wait });
         if (rateAttempts >= RATE_ATTEMPTS || wait > RATE_WAIT_MAX_MS) {
-          this.hooks.log(`model ${this.name} in ${this.code}: rate limited (${error.message}); waiting ${Math.round(wait / 1000)} s before trying again`);
+          // This turn is over. Each turn that ends throttled doubles the wait, so a
+          // per-minute limit costs one short pause while an exhausted daily quota
+          // settles into long ones, without ever calling the endpoint broken.
+          this.rateStrikes += 1;
+          const cooldown = Math.min(RATE_COOLDOWN_MAX_MS, wait * 2 ** (this.rateStrikes - 1));
+          this.rateLimitedUntil = Date.now() + cooldown;
+          this.hooks.record?.(this.profileKey, { cooldownMs: cooldown });
+          this.hooks.log(`model ${this.name} in ${this.code}: rate limited (${error.message}); waiting ${Math.round(cooldown / 1000)} s before trying again`);
           throw error;
         }
         this.hooks.log(`model ${this.name} in ${this.code}: rate limited (${error.message}); retrying in ${wait} ms`);
@@ -408,6 +421,7 @@ export class ModelParticipant {
       if (this.latencies.length > 200) this.latencies.shift();
       this.hooks.record?.(this.profileKey, { ms });
       this.failures = 0;
+      this.rateStrikes = 0;
       if (this.window < (this.profile.window || 40)) this.window += 1; // creep back toward the configured window
       this.lastReplyAt = Date.now();
       if (text.replace(/[\s.]+$/, "").toLowerCase() === PASS) {
@@ -419,10 +433,21 @@ export class ModelParticipant {
       }
     } catch (error) {
       if (this.stopped) return;
+      // Being throttled is not being broken: it never counts as a failure and never
+      // marks the participant unavailable. completeWithinLimit has already logged the
+      // wait, recorded the refusals, and set the cooldown; come back when it ends,
+      // and tell the room only if the wait is long enough to be worth a line.
+      if (isRateLimited(error)) {
+        const remaining = this.rateLimitedUntil - Date.now();
+        if (remaining >= RATE_NOTICE_MS && this.rateNoticeFor !== this.rateLimitedUntil) {
+          this.rateNoticeFor = this.rateLimitedUntil;
+          await this.hooks.system(this.code, `${this.name} is rate limited by its endpoint; trying again in ${Math.round(remaining / 60000)} min.`);
+        }
+        if (remaining > 0) this.timer = setTimeout(() => this.reply().catch(() => {}), remaining + 50);
+        return;
+      }
       this.failures += 1;
-      // A 429 was already recorded as a rate limit, not a failed call: counting it
-      // twice would retire a participant that is only throttled.
-      if (!isRateLimited(error)) this.hooks.record?.(this.profileKey, { failure: true, timeout: /no answer within/.test(error.message) });
+      this.hooks.record?.(this.profileKey, { failure: true, timeout: /no answer within/.test(error.message) });
       this.hooks.log(`model ${this.name} in ${this.code}: failure ${this.failures}: ${error.message}`);
       if (this.failures >= 3) {
         const pause = Math.min(3_600_000, 600_000 * 2 ** (this.failures - 3));

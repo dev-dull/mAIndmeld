@@ -228,9 +228,11 @@ A hosted tier usually limits requests, or tokens, per minute. A model
 participant that gets a 429 waits before trying again, and it waits as long
 as the endpoint asks: `Retry-After` if it is sent, else the longest
 `x-ratelimit-reset-*` bucket, else a "retry in 4s" line in the body, else
-20 seconds doubling. Three refusals in one turn cost one failure between
-them rather than three, so a limit that clears in a minute no longer pauses
-a participant for ten.
+20 seconds doubling. Being throttled is never counted as a failure and
+never marks a participant unavailable, so a limit that clears in a minute no
+longer pauses one for ten; instead each turn that ends throttled doubles the
+wait, up to fifteen minutes, and any answer resets it. A wait of two minutes
+or more puts a line in the room so people know why it went quiet.
 
 The wait applies to the profile, not to the room: every room using that
 profile holds back until it clears, because the quota belongs to the
