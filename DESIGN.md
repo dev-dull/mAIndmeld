@@ -531,6 +531,18 @@ Model participants respect `addressed_only` and a minimum gap between their
 own replies. They never file `close` and are not eligible to vote on it;
 they may file `call_human` and vote on it.
 
+A rate limit is not a failure (issues #58, #44). When an endpoint answers
+429, the participant waits as long as the endpoint asks -- `Retry-After`,
+else the longest `x-ratelimit-reset-*` bucket, else a retry hint in the
+body, else a doubling ladder from the profile's `rate_limit_backoff_ms` --
+and tries again in the same turn, up to three attempts, rebuilding the
+prompt so it answers the transcript as it stands after the wait. The burst
+costs one failure at most, because a per-minute limit clears long before
+the ten-minute unavailable pause would. The wait is recorded against the
+profile, not the room, so every room using that profile holds back until it
+clears: the quota belongs to the provider. A hint longer than 90 seconds
+becomes that cooldown instead of a long sleep inside a turn.
+
 Images for model participants (decision 15): a profile flagged `vision`
 gets the newest few images from others as data-URI image parts, metadata
 stripped, within a size cap; everything else, and every non-vision
@@ -657,7 +669,10 @@ forever.
 
 - **Circuit breaker per profile and per adapter.** Five consecutive
   failures, or any 429 with a retry-after, open the breaker for ten minutes,
-  doubling to a cap of one hour. While open, calls are not attempted.
+  doubling to a cap of one hour. While open, calls are not attempted. This
+  is the summarizer's and captioner's path; a model participant's 429 is a
+  timed cooldown on the profile instead (section 7.3), since throttling is
+  not unavailability.
 - **Model participants under an open breaker** are marked `unavailable`:
   a system message says so, they drop out of the eligible-voter set for
   motions filed afterwards, and an open motion recomputes its tally without

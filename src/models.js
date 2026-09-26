@@ -5,14 +5,67 @@ import { messageText } from "./rooms.js";
 
 const PASS = "[pass]";
 const DEBOUNCE_MS = 1500;
+/** Attempts per reply when the endpoint says "rate limited": two waits, then give up. */
+const RATE_ATTEMPTS = 3;
+/** A hint longer than this is not slept on inside a reply; it becomes a cooldown. */
+const RATE_WAIT_MAX_MS = 90_000;
 
 export class ModelError extends Error {
-  constructor(message, { status, body } = {}) {
+  constructor(message, { status, body, retryAfterMs: hint = null } = {}) {
     super(message);
     this.name = "ModelError";
     this.status = status;
     this.body = body;
+    /** How long the endpoint asked us to wait, in ms, when it said so. */
+    this.retryAfterMs = hint;
   }
+}
+
+/** `2`, `2.5s`, `217ms`, `1m30s`, `1h` -> ms. Null when it is not a duration. */
+function durationMs(value) {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!text) return null;
+  if (/^\d+(\.\d+)?$/.test(text)) return Math.round(Number(text) * 1000); // bare seconds
+  // Whole-string match only: an HTTP date is not a duration, and "26 Sep" is not 26 s.
+  if (!/^(?:\d+(?:\.\d+)?\s*(?:ms|s|m|h)\s*)+$/.test(text)) return null;
+  const parts = text.match(/\d+(?:\.\d+)?\s*(?:ms|s|m|h)/g);
+  if (!parts) return null;
+  let total = 0;
+  for (const part of parts) {
+    const n = Number.parseFloat(part);
+    const unit = part.replace(/[\d.\s]/g, "");
+    total += n * (unit === "ms" ? 1 : unit === "s" ? 1000 : unit === "m" ? 60_000 : 3_600_000);
+  }
+  return Math.round(total);
+}
+
+/**
+ * How long a rate-limited endpoint wants us to wait. `Retry-After` (seconds or
+ * an HTTP date) wins; else the longest `x-ratelimit-reset-*` bucket, since the
+ * exhausted one is what blocks us; else a "retry in 4.07s" line in the body,
+ * which is how Gemini says it. Null when nothing says.
+ */
+export function retryAfterMs(headers, body = "") {
+  const get = (name) => (typeof headers?.get === "function" ? headers.get(name) : headers?.[name]);
+  const after = get("retry-after");
+  if (after) {
+    const seconds = durationMs(after);
+    if (seconds !== null) return seconds;
+    const date = Date.parse(after);
+    if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+  }
+  const resets = ["x-ratelimit-reset-tokens", "x-ratelimit-reset-requests", "x-ratelimit-reset"]
+    .map((name) => durationMs(get(name)))
+    .filter((ms) => ms !== null);
+  if (resets.length) return Math.max(...resets);
+  const said = /retry in (\d+(?:\.\d+)?)\s*(ms|s)?\b/i.exec(String(body || ""));
+  if (said) return Math.round(Number(said[1]) * (said[2] === "ms" ? 1 : 1000));
+  return null;
+}
+
+/** The endpoint is throttling us: come back later, the request itself was fine. */
+export function isRateLimited(error) {
+  return error?.status === 429;
 }
 
 /** Minimal chat-completions client. Works with llama.cpp, Ollama, vLLM, Gemini, OpenAI. */
@@ -47,7 +100,7 @@ export class OpenAIChatClient {
       throw new ModelError(`${this.model}: ${error.name === "TimeoutError" ? `no answer within ${this.timeoutMs} ms` : error.message}`);
     }
     const text = await res.text();
-    if (!res.ok) throw new ModelError(`${this.model}: HTTP ${res.status}`, { status: res.status, body: text.slice(0, 500) });
+    if (!res.ok) throw new ModelError(`${this.model}: HTTP ${res.status}`, { status: res.status, body: text.slice(0, 500), retryAfterMs: retryAfterMs(res.headers, text) });
     let data;
     try {
       data = JSON.parse(text);
@@ -163,6 +216,7 @@ export class ModelParticipant {
     this.replies = 0;
     this.failures = 0;
     this.pausedUntil = 0;
+    this.rateLimitedUntil = 0;
     this.lastReplyAt = 0;
     this.timer = null;
     this.busy = false;
@@ -196,6 +250,7 @@ export class ModelParticipant {
       window: this.window,
       window_max: this.profile.window || 40,
       paused_until: this.pausedUntil ? new Date(this.pausedUntil).toISOString() : null,
+      rate_limited_until: this.rateLimitedUntil > Date.now() ? new Date(this.rateLimitedUntil).toISOString() : null,
       latency_ms: { p50: pick(0.5), p95: pick(0.95), n: sorted.length },
     };
   }
@@ -233,19 +288,43 @@ export class ModelParticipant {
 
   /**
    * One completion, retried with a smaller window when the endpoint says the
-   * request is too large. A 413 is deterministic, so it is neither a failure
-   * nor a reason to pause: the same room simply needs a shorter view.
+   * request is too large, and retried after a wait when it says we are rate
+   * limited. A 413 is deterministic, so it is neither a failure nor a reason to
+   * pause: the same room simply needs a shorter view. A 429 is "come back
+   * later": we wait as long as the endpoint asks (or a doubling ladder when it
+   * does not say), and the whole burst costs one failure at most, because a
+   * per-minute limit clears long before the ten-minute unavailable pause would.
    */
   async completeWithinLimit(room) {
+    let rateAttempts = 0;
     for (;;) {
       const turns = buildPrompt(room, this.name, this.profile, { loadImage: this.hooks.loadImage, window: this.window });
       try {
         return await this.client.complete(turns, { maxTokens: this.profile.maxTokens ?? 600, temperature: this.profile.temperature });
       } catch (error) {
-        if (!isTooLarge(error) || this.window <= MIN_WINDOW) throw error;
-        const before = this.window;
-        this.window = Math.max(MIN_WINDOW, Math.floor(this.window / 2));
-        this.hooks.log(`model ${this.name} in ${this.code}: request too large (${error.message}); window ${before} -> ${this.window}, retrying`);
+        if (isTooLarge(error) && this.window > MIN_WINDOW) {
+          const before = this.window;
+          this.window = Math.max(MIN_WINDOW, Math.floor(this.window / 2));
+          this.hooks.log(`model ${this.name} in ${this.code}: request too large (${error.message}); window ${before} -> ${this.window}, retrying`);
+          continue;
+        }
+        if (!isRateLimited(error)) throw error;
+        rateAttempts += 1;
+        const base = this.profile.rateLimitBackoffMs ?? 20_000;
+        const wait = Math.max(1, error.retryAfterMs ?? base * 2 ** (rateAttempts - 1));
+        // Every room using this profile waits too: the quota is the provider's, not this room's.
+        this.rateLimitedUntil = Date.now() + wait;
+        this.hooks.record?.(this.profileKey, { rateLimited: true, cooldownMs: wait });
+        if (rateAttempts >= RATE_ATTEMPTS || wait > RATE_WAIT_MAX_MS) {
+          this.hooks.log(`model ${this.name} in ${this.code}: rate limited (${error.message}); waiting ${Math.round(wait / 1000)} s before trying again`);
+          throw error;
+        }
+        this.hooks.log(`model ${this.name} in ${this.code}: rate limited (${error.message}); retrying in ${wait} ms`);
+        await new Promise((r) => setTimeout(r, wait));
+        if (this.stopped) throw error;
+        const fresh = this.hooks.loadRoom(this.code);
+        if (!fresh || fresh.status !== "open") throw error;
+        room = fresh; // the transcript moved on while we waited
       }
     }
   }
@@ -268,6 +347,13 @@ export class ModelParticipant {
       vote = /^\s*no\b/i.test(first) ? "no" : "yes";
       reason = (rest.join(" ").trim() || first).slice(0, 300);
     } catch (error) {
+      // A vote is time-sensitive and its fallback is safe, so it is not retried;
+      // a rate limit still cools the profile down so other rooms do not pile on.
+      if (isRateLimited(error)) {
+        const wait = Math.max(1, error.retryAfterMs ?? this.profile.rateLimitBackoffMs ?? 20_000);
+        this.rateLimitedUntil = Date.now() + wait;
+        this.hooks.record?.(this.profileKey, { rateLimited: true, cooldownMs: wait });
+      }
       this.hooks.log(`model ${this.name} in ${this.code}: vote fell back to yes: ${error.message}`);
     }
     await this.hooks.vote(this.code, this.name, motion.id, vote, reason);
@@ -298,7 +384,18 @@ export class ModelParticipant {
       if (!addressed) return;
     }
 
-    if (this.hooks.allowCall && !this.hooks.allowCall(this.profileKey)) {
+    const allowed = this.hooks.allowCall ? this.hooks.allowCall(this.profileKey) : true;
+    const allow = typeof allowed === "object" ? allowed : { ok: allowed };
+    if (!allow.ok) {
+      if (allow.reason === "rate") {
+        // The profile is throttled by the provider, in this room or another one.
+        // Come back when it clears instead of spending more of an empty quota.
+        const wait = Math.max(250, allow.retryInMs || 1000);
+        this.rateLimitedUntil = Date.now() + wait;
+        this.hooks.log(`model ${this.name} in ${this.code}: profile ${this.profileKey} is rate limited; waiting ${Math.round(wait / 1000)} s`);
+        this.timer = setTimeout(() => this.reply().catch(() => {}), wait + 50);
+        return;
+      }
       this.hooks.log(`model ${this.name} in ${this.code}: hourly call cap for profile ${this.profileKey} reached; staying quiet`);
       this.lastReplyAt = Date.now();
       return;
@@ -321,8 +418,11 @@ export class ModelParticipant {
         this.hooks.log(`model ${this.name} in ${this.code}: replied (${ms} ms)`);
       }
     } catch (error) {
+      if (this.stopped) return;
       this.failures += 1;
-      this.hooks.record?.(this.profileKey, { failure: true, timeout: /no answer within/.test(error.message) });
+      // A 429 was already recorded as a rate limit, not a failed call: counting it
+      // twice would retire a participant that is only throttled.
+      if (!isRateLimited(error)) this.hooks.record?.(this.profileKey, { failure: true, timeout: /no answer within/.test(error.message) });
       this.hooks.log(`model ${this.name} in ${this.code}: failure ${this.failures}: ${error.message}`);
       if (this.failures >= 3) {
         const pause = Math.min(3_600_000, 600_000 * 2 ** (this.failures - 3));
