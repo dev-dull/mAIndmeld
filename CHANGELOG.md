@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-09-26
+
 ### Fixed
 - Embeddings can now be backfilled: `POST /api/kb/index` and
   `maindmeld kb reindex` embed every decision that lacks a vector from
@@ -202,7 +204,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Notifiers: webhook, ntfy, desktop.
 - Docker image, compose demo, CI, security policy.
 
-[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.3
 [0.5.2]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.2
 [0.5.1]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.1
 [0.5.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.0
