@@ -73,9 +73,11 @@ test("a launch token cannot sign in to the browser, and a bad launch id is refus
 });
 
 test("expiry and revocation end a launch token; the tick sweeps the record", async () => {
-  const short = s.app.auth.createLaunchToken({ room: code, harness: "pi", launch: "L2", ttlMs: 50 });
+  // Long enough that a loaded runner still makes the first request inside the
+  // token's life, short enough to wait out: 50 ms lost this race on CI.
+  const short = s.app.auth.createLaunchToken({ room: code, harness: "pi", launch: "L2", ttlMs: 600 });
   assert.equal((await s.req("GET", `/api/rooms/${code}`, { token: short.token })).status, 200);
-  await new Promise((r) => setTimeout(r, 80));
+  await new Promise((r) => setTimeout(r, 700));
   assert.equal((await s.req("GET", `/api/rooms/${code}`, { token: short.token })).status, 401, "expired");
   assert.ok(s.app.auth.listTokens().some((t) => t.name === "launch-L2"));
   await s.app.service.tick();
