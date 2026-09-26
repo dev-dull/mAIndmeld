@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Embeddings can now be backfilled: `POST /api/kb/index` and
+  `maindmeld kb reindex` embed every decision that lacks a vector from
+  the current model. Before, the only backfill path was unreachable, so
+  enabling `search.embeddings_profile` on an existing store, or changing
+  the embedding model, left earlier decisions out of semantic search
+  for good (#59). The backfill runs in chunks of 32 and honours the
+  profile's `timeout_ms`, which the embedding client previously ignored.
+
 ### Changed
 - The room page's Invite box no longer offers "Call a human": the person
   on the page is the human. Agents still call one with `room_invite`.

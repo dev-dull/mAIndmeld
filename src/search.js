@@ -156,7 +156,7 @@ export async function search(kb, query, { k = 5, topic, includeInactive = false,
       for (const d of decisions) {
         const rec = embeddings.get(d.id);
         // Only vectors from the current model are comparable; others are ignored
-        // until `maindmeld index` re-embeds them.
+        // until `maindmeld kb reindex` re-embeds them.
         if (rec?.vector && (!rec.model || rec.model === embedder.model)) vecScores.set(d.id, Math.max(0, cosine(qv, rec.vector)));
       }
     } catch {

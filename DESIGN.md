@@ -286,6 +286,7 @@ it. Records without the fields are unchanged, so nothing migrates.
 | `POST /api/launches/:id/status` | The runner reports `exited` or `failed`, with a reason or exit code |
 | `GET /api/runners` | Runners the server knows, what they offer, and whether they are online |
 | `GET /api/kb/search?q=...&k=5` | Retrieval over the knowledge store (milestone 6) |
+| `POST /api/kb/index` | Rewrite `INDEX.md` and embed every decision without a vector from the current embedding model: the backfill after enabling or changing embeddings. Returns the count written. `GET` returns the index without side effects. |
 | `GET /api/health` | Version, uptime, room counts, breaker states, pending ingests |
 | `POST /mcp` | MCP over streamable HTTP, bearer token, same tool surface as section 9 |
 

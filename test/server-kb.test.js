@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
 import path from "node:path";
 
 import { boot } from "./helpers.js";
@@ -128,5 +129,58 @@ test("sweep endpoints: run, list, read, human-only decide; the scheduler runs a 
     assert.equal((await s.app.service.tick()).sweep, null, "not due again");
   } finally {
     await s.close();
+  }
+});
+
+test("POST /api/kb/index backfills embeddings in chunks; GET stays a read", async () => {
+  const batches = [];
+  let fail = false;
+  const stub = http.createServer(async (req, res) => {
+    let body = "";
+    for await (const c of req) body += c;
+    if (fail) {
+      res.writeHead(500);
+      return res.end("{}");
+    }
+    const { input } = JSON.parse(body);
+    batches.push(input.length);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ data: input.map((_, index) => ({ index, embedding: [1, index % 2] })) }));
+  });
+  await new Promise((r) => stub.listen(0, "127.0.0.1", r));
+  const s = await boot({ extra: { profiles: { embed: { base_url: `http://127.0.0.1:${stub.address().port}/v1`, model: "fake-embed" } }, search: { embeddings_profile: "embed" } } });
+  try {
+    const kb = seed(s);
+    kb.saveDecisions([...kb.decisions(), ...Array.from({ length: 33 }, (_, i) => D(`D-x${i}`, "api-contract", `Rule number ${i} about the export command.`, "2026-09-07"))]);
+    assert.equal((await s.req("GET", "/api/health")).data.search.vectors, 0, "nothing embedded before the backfill");
+
+    const read = await s.req("GET", "/api/kb/index");
+    assert.equal(read.status, 200);
+    assert.match(read.headers.get("content-type"), /text\/markdown/);
+    assert.deepEqual(batches, [], "a GET embeds nothing");
+
+    const first = await s.req("POST", "/api/kb/index", { body: {} });
+    assert.equal(first.status, 200);
+    assert.equal(first.data.reindex.embedded, 40);
+    assert.equal(first.data.reindex.vectors, 40);
+    assert.equal(first.data.reindex.model, "fake-embed");
+    assert.deepEqual(batches, [32, 8], "chunked requests");
+    assert.equal((await s.req("GET", "/api/health")).data.search.vectors, 40);
+
+    const again = await s.req("POST", "/api/kb/index", { body: {} });
+    assert.equal(again.data.reindex.embedded, 0, "only decisions without a current vector are embedded");
+
+    kb.saveDecisions([...kb.decisions(), D("D-new", "retry-policy", "Retries log every attempt.", "2026-09-08")]);
+    fail = true;
+    const failed = await s.req("POST", "/api/kb/index", { body: {} });
+    assert.equal(failed.status, 200, "a failed embed still returns");
+    assert.equal(failed.data.reindex.embedded, 0);
+    assert.equal(failed.data.reindex.vectors, 40, "earlier vectors survive");
+
+    const scoped = s.app.auth.createLaunchToken({ room: "MM-AAAA", harness: "h", launch: "l1" });
+    assert.equal((await s.req("POST", "/api/kb/index", { body: {}, token: scoped.token })).status, 403, "room-scoped tokens cannot reindex");
+  } finally {
+    await s.close();
+    stub.close();
   }
 });
