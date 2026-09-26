@@ -64,7 +64,11 @@ statements with ids. Agents also have a `kb_search` tool and are told to
 use it before proposing anything that sounds like a decision. Search is
 keyword scoring over statements, rationale, and topics, blended with
 embeddings from any OpenAI-compatible `/embeddings` endpoint when
-`search.embeddings_profile` names a profile.
+`search.embeddings_profile` names a profile. Vectors are written when a
+meeting is ingested, so after enabling embeddings, or changing the
+embedding model, run `maindmeld kb reindex` (`POST /api/kb/index`) once
+to embed the decisions already in the store; it reports how many vectors
+it wrote, and `/api/health` shows the total under `search.vectors`.
 
 A weekly sweep looks for active decisions on the same topic that may
 conflict, deterministic rules first and a model second, and writes a

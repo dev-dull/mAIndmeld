@@ -40,6 +40,7 @@ Knowledge store
   ingest CODE --skip            close a room without waiting for its summary
   resummarize M-ID              rebuild a meeting's note from its transcript
   kb meetings | decisions [TOPIC] | topics | note M-ID | index
+  kb reindex                    rewrite INDEX.md and embed decisions that lack a vector
   search "query" [--k N] [--topic T] [--all]
   brief CODE                    what a called human needs to know
   sweep [run] [--all] | list | show SWEEP | apply SWEEP N | reject SWEEP N
@@ -345,7 +346,11 @@ class Cli {
     } else if (what === "index") {
       const res = await fetch(`${this.base}/api/kb/index`, { headers: { authorization: `Bearer ${this.cliToken({ create: true })}` } });
       this.io.out(await res.text());
-    } else throw new Error("usage: maindmeld kb meetings | decisions [TOPIC] | topics | note M-ID | index");
+    } else if (what === "reindex") {
+      const { reindex } = await this.api("POST", "/api/kb/index", {});
+      if (!reindex.enabled) return this.io.out("index rewritten; no embeddings profile is configured");
+      this.io.out(`index rewritten; ${reindex.embedded} vector${reindex.embedded === 1 ? "" : "s"} written, ${reindex.vectors} total for ${reindex.model}`);
+    } else throw new Error("usage: maindmeld kb meetings | decisions [TOPIC] | topics | note M-ID | index | reindex");
   }
 
   async search(query, flags) {

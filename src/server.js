@@ -27,6 +27,8 @@ import crypto from "node:crypto";
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const VERSION = JSON.parse(fs.readFileSync(path.join(here, "..", "package.json"), "utf8")).version;
 const WEB_DIR = path.join(here, "web");
+/** Decisions embedded per request during a backfill; keeps requests short on slow endpoints. */
+const EMBED_CHUNK = 32;
 
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const STATIC_TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" };
@@ -210,7 +212,8 @@ export function createApp(config = loadConfig()) {
 
   // ---- retrieval (DESIGN.md 13) ----
 
-  const embedder = config.search.embeddingsProfile ? new EmbeddingClient(config.profiles[config.search.embeddingsProfile]) : null;
+  const embedProfile = config.search.embeddingsProfile ? config.profiles[config.search.embeddingsProfile] : null;
+  const embedder = embedProfile ? new EmbeddingClient(embedProfile, { timeoutMs: embedProfile.timeoutMs }) : null;
   const embeddingStore = new EmbeddingStore(config.kbDir);
   const searchCache = { key: null, indexes: new Map() };
   const indexCache = {
@@ -238,22 +241,31 @@ export function createApp(config = loadConfig()) {
     return kbSearch(kb, query, { ...opts, embedder, embeddings: embedder ? embeddingStore.read() : null, cache: indexCache });
   }
 
-  /** Best effort: embed decisions that lack a vector. Never throws. */
+  /**
+   * Best effort: embed decisions that lack a vector from the current model, in
+   * chunks so a backfill of a large store keeps what it has finished when the
+   * endpoint fails or times out. Returns how many vectors were written. Never throws.
+   */
   async function embedMissing(ids = null) {
     if (!embedder) return 0;
+    let written = 0;
     try {
       const have = embeddingStore.read();
       const current = (d) => have.get(d.id)?.model === embedder.model;
       const todo = kb.decisions().filter((d) => !current(d) && (!ids || ids.includes(d.id)));
-      if (!todo.length) return 0;
-      const vectors = await embedder.embed(todo.map(embeddingText));
-      embeddingStore.append(todo.map((d, i) => ({ id: d.id, model: embedder.model, vector: vectors[i], created_at: new Date().toISOString() })));
-      return todo.length;
+      for (let i = 0; i < todo.length; i += EMBED_CHUNK) {
+        const chunk = todo.slice(i, i + EMBED_CHUNK);
+        const vectors = await embedder.embed(chunk.map(embeddingText));
+        embeddingStore.append(chunk.map((d, j) => ({ id: d.id, model: embedder.model, vector: vectors[j], created_at: new Date().toISOString() })));
+        written += chunk.length;
+      }
     } catch (error) {
-      log(`embeddings: ${error.message}`);
-      return 0;
+      log(`embeddings: ${error.message}${written ? ` after ${written} vector${written === 1 ? "" : "s"}` : ""}`);
     }
+    return written;
   }
+
+  const embeddingsStatus = () => ({ enabled: Boolean(embedder), model: embedder?.model || null, vectors: embedder ? embeddingStore.read().size : 0 });
 
   /** The few decisions an arriving participant should know about. Hard-capped. */
   async function priorDecisions(room) {
@@ -970,9 +982,13 @@ export function createApp(config = loadConfig()) {
       meeting: (id) => kb.readMeeting(id),
       decisions: ({ status, topic } = {}) => kb.decisions().filter((d) => (!status || d.status === status) && (!topic || d.topic === topic)),
       topics: () => kb.topics(),
-      reindex: async () => { kb.writeIndex(); await embedMissing(); return kb.index(); },
+      reindex: async () => {
+        kb.writeIndex();
+        const embedded = await embedMissing();
+        return { embedded, ...embeddingsStatus() };
+      },
       search: (query, opts) => searchDecisions(query, opts),
-      embeddings: () => ({ enabled: Boolean(embedder), model: embedder?.model || null, vectors: embedder ? embeddingStore.read().size : 0 }),
+      embeddings: embeddingsStatus,
     },
 
     // ---- the sweep (DESIGN.md 12): proposes, never retires ----
@@ -1466,6 +1482,12 @@ export function createApp(config = loadConfig()) {
           return send(res, 200, { proposal: service.sweep.decide(principal, sub, verb, body) });
         }
         throw new HttpError(404, "not found");
+      }
+      if (req.method === "POST" && code === "index" && !sub) {
+        // Rewrite INDEX.md and embed every decision that lacks a vector from the
+        // current model: the backfill after enabling or changing embeddings.
+        requireScope(principal, null);
+        return send(res, 200, { reindex: await service.kb.reindex() });
       }
       if (req.method !== "GET") throw new HttpError(405, "method not allowed");
       if (code === "index") {
