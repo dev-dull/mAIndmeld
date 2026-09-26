@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-09-26
+
 ### Fixed
 - A model participant that is rate limited now waits as long as the
   endpoint asks (`Retry-After`, the `x-ratelimit-reset-*` buckets, or a
@@ -221,7 +223,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Notifiers: webhook, ntfy, desktop.
 - Docker image, compose demo, CI, security policy.
 
-[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.4
 [0.5.3]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.3
 [0.5.2]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.2
 [0.5.1]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.1
