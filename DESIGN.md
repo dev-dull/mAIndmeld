@@ -536,12 +536,17 @@ A rate limit is not a failure (issues #58, #44). When an endpoint answers
 else the longest `x-ratelimit-reset-*` bucket, else a retry hint in the
 body, else a doubling ladder from the profile's `rate_limit_backoff_ms` --
 and tries again in the same turn, up to three attempts, rebuilding the
-prompt so it answers the transcript as it stands after the wait. The burst
-costs one failure at most, because a per-minute limit clears long before
-the ten-minute unavailable pause would. The wait is recorded against the
+prompt so it answers the transcript as it stands after the wait. Throttling
+is never a failure and never marks the participant unavailable: instead,
+each turn that ends throttled doubles the cooldown, to a ceiling of fifteen
+minutes, and any answer resets it. A per-minute limit therefore costs one
+short wait, while an exhausted daily quota settles into long ones without
+the endpoint ever being called broken. The cooldown is recorded against the
 profile, not the room, so every room using that profile holds back until it
 clears: the quota belongs to the provider. A hint longer than 90 seconds
-becomes that cooldown instead of a long sleep inside a turn.
+becomes that cooldown instead of a long sleep inside a turn. A cooldown of
+two minutes or more puts one line in the room, so participants know why it
+went quiet.
 
 Images for model participants (decision 15): a profile flagged `vision`
 gets the newest few images from others as data-URI image parts, metadata

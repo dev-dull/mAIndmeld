@@ -109,7 +109,7 @@ test("a 429 that clears is waited out, not counted as a failure", async () => {
   });
 });
 
-test("a 429 that persists costs one failure for the burst, and holds every room on the profile", async () => {
+test("a 429 that persists never becomes a failure, and holds every room on the profile", async () => {
   // Waits of 700 ms then 1400 ms, leaving a 2800 ms cooldown: long enough that the
   // other room's debounce fires while it is still in force.
   await withServer({ rate_limit_backoff_ms: 700 }, async ({ api, health, waitFor, openRoom, calls, setAnswer, modelStatus }) => {
@@ -118,16 +118,19 @@ test("a 429 that persists costs one failure for the burst, and holds every room 
     setAnswer({ status: 429 }); // no hint: the ladder applies
 
     await api("POST", `/api/rooms/${first}/messages`, { content: "your turn, Throttled" });
-    assert.ok(await waitFor(async () => (await modelStatus(first)).failures >= 1, 12_000), "the burst ended in one failure");
+    assert.ok(await waitFor(() => calls.length >= 3, 12_000), "it kept trying inside the turn");
+    await new Promise((r) => setTimeout(r, 100)); // the turn ends just after the third refusal
     const afterBurst = calls.length;
     assert.equal(afterBurst, 3, `three attempts in one reply, not ${afterBurst}`);
+    assert.ok((await modelStatus(first)).rate_limited_until, "it knows when to come back");
     assert.ok(calls[1].at - calls[0].at >= 650, `first wait ~700 ms: ${calls[1].at - calls[0].at}`);
     assert.ok(calls[2].at - calls[1].at >= 1300, `then double: ${calls[2].at - calls[1].at}`);
 
     const one = await modelStatus(first);
-    assert.equal(one.failures, 1, "three 429s in a row are one failure");
-    assert.equal(one.paused_until, null, "not the unavailable pause");
-    assert.ok(one.rate_limited_until, "it knows when to come back");
+    assert.equal(one.failures, 0, "being throttled is not failing");
+    assert.equal(one.paused_until, null, "and never the ten-minute unavailable pause");
+    const said = (await api("GET", `/api/rooms/${first}`)).data.room.messages.filter((m) => m.kind === "system" && /unavailable/.test(m.content));
+    assert.deepEqual(said, [], "the room is never told the endpoint is unavailable");
 
     // The quota belongs to the provider: the other room must not spend it either.
     const skippedBefore = (await health()).profiles.throttled.skipped;
@@ -140,6 +143,7 @@ test("a 429 that persists costs one failure for the burst, and holds every room 
     // burst, asserted above) is what eventually retires a genuinely dead endpoint.
     const p = (await health()).profiles.throttled;
     assert.equal(p.failures, 0, "a throttled call is not a failed call");
+    assert.equal((await modelStatus(first)).failures, 0);
     assert.equal(p.rate_limited, 3);
     assert.ok(p.rate_limited_until, "health shows the cooldown");
     assert.match(p.hint, /rate limited/);
@@ -156,11 +160,49 @@ test("a hint longer than the in-reply ceiling becomes a cooldown instead of a lo
     setAnswer({ status: 429, headers: { "retry-after": "600" } }); // ten minutes: do not sleep on it
     await api("POST", `/api/rooms/${code}/messages`, { content: "your turn, Throttled" });
 
-    assert.ok(await waitFor(async () => (await modelStatus(code)).failures >= 1));
+    assert.ok(await waitFor(async () => (await modelStatus(code)).rate_limited_until !== null));
     await new Promise((r) => setTimeout(r, 300));
     assert.equal(calls.length, 1, "one attempt, no in-reply retry");
+    assert.equal((await modelStatus(code)).failures, 0, "and no failure for it");
     const p = (await health()).profiles.throttled;
     assert.equal(p.rate_limited, 1);
     assert.ok(Date.parse(p.rate_limited_until) - Date.now() > 500_000, "the cooldown carries the ten minutes");
   });
+});
+
+test("each turn that ends throttled doubles the cooldown, and an answer clears the count", async () => {
+  const { ModelParticipant, ModelError } = await import("../src/models.js");
+  const room = { code: "MM-TEST", status: "open", title: "T", objective: "", response_mode: "open", participants: [{ name: "M", kind: "model" }], messages: [] };
+  const cooldowns = [];
+  let throttle = true;
+  const mp = new ModelParticipant({
+    code: "MM-TEST",
+    name: "M",
+    profileKey: "throttled",
+    profile: { baseUrl: "http://127.0.0.1:1/v1", model: "m", window: 40, rateLimitBackoffMs: 10 },
+    hooks: { loadRoom: () => room, on: () => () => {}, log: () => {}, record: (_k, e) => { if (e.cooldownMs && !e.rateLimited) cooldowns.push(e.cooldownMs); } },
+  });
+  let calls = 0;
+  mp.client = { complete: async () => {
+    calls += 1;
+    if (throttle) throw new ModelError("m: HTTP 429", { status: 429 });
+    return { text: "fine", ms: 1 };
+  } };
+
+  await assert.rejects(() => mp.completeWithinLimit(room), /429/);
+  assert.equal(calls, 3, "three attempts per turn");
+  assert.equal(mp.rateStrikes, 1);
+  await assert.rejects(() => mp.completeWithinLimit(room), /429/);
+  assert.equal(mp.rateStrikes, 2);
+  assert.deepEqual(cooldowns, [40, 80], "the cooldown doubles per throttled turn");
+
+  // An answer resets the escalation, so a limit that clears costs nothing later.
+  throttle = false;
+  mp.failures = 0;
+  const got = await mp.completeWithinLimit(room);
+  assert.equal(got.text, "fine");
+  mp.rateStrikes = 0; // reply() does this on a successful answer
+  throttle = true;
+  await assert.rejects(() => mp.completeWithinLimit(room), /429/);
+  assert.equal(cooldowns.at(-1), 40, "back to the first rung");
 });
