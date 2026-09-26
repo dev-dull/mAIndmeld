@@ -441,7 +441,8 @@ export class ModelParticipant {
         const remaining = this.rateLimitedUntil - Date.now();
         if (remaining >= RATE_NOTICE_MS && this.rateNoticeFor !== this.rateLimitedUntil) {
           this.rateNoticeFor = this.rateLimitedUntil;
-          await this.hooks.system(this.code, `${this.name} is rate limited by its endpoint; trying again in ${Math.round(remaining / 60000)} min.`);
+          // The room may have closed while we waited; a lost notice is not worth an error.
+          await this.hooks.system(this.code, `${this.name} is rate limited by its endpoint; trying again in ${Math.round(remaining / 60000)} min.`).catch(() => {});
         }
         if (remaining > 0) this.timer = setTimeout(() => this.reply().catch(() => {}), remaining + 50);
         return;
