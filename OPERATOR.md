@@ -248,6 +248,13 @@ fewer rooms on that profile at once, a lower `max_calls_per_hour`, a
 smaller `window` or `max_tokens` so each turn costs fewer tokens, or a
 larger quota. The health hint says so when refusals outnumber answers.
 
+A daily quota is a different case from a per-minute one. Once the day's
+requests are spent, nothing clears until the quota resets, so that profile
+sits at the fifteen-minute ceiling and its `rate_limited_until` is set
+almost all the time. That is the intended behaviour and not a fault to
+chase: the participant is unavailable for the rest of the day, quietly and
+without being counted as broken. Only a larger quota changes it.
+
 ### Images and model participants
 
 A profile with `"vision": true` receives images in the room as image parts
