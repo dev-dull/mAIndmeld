@@ -188,6 +188,13 @@ a reply budget per room, a minimum gap between replies, and an hourly call
 cap, and `maindmeld status` prints observed latency against the configured
 timeout with a hint when they disagree.
 
+A model participant is named in the room by its profile's `display_name`,
+read when it joins, and a caller cannot name it anything else. So changing a
+profile's `model` and `display_name` together renames it in rooms opened
+after the change, while rooms already held keep the names they recorded. That
+is what keeps a transcript, and any decision written from it, attributed to
+the model that actually answered.
+
 ```json
 {
   "profiles": {

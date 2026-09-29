@@ -124,8 +124,15 @@ test("a model participant joins a room, answers others, passes when told, and st
     assert.equal(missing.status, 404);
     assert.match(missing.data.error, /configured: echo/);
 
-    const invited = await api("POST", `/api/rooms/${code}/invite`, { kind: "model", profile: "echo" });
-    assert.equal(invited.status, 200);
+    // A model participant is named by its profile, never by the caller (#57): a
+    // stale name in an agent's prompt must not attribute answers to another model.
+    const renamed = await api("POST", `/api/rooms/${code}/invite`, { kind: "model", profile: "echo", name: "GPT-OSS" });
+    assert.equal(renamed.status, 400);
+    assert.match(renamed.data.error, /named by its profile: echo is "Echo", not "GPT-OSS"/);
+    assert.equal((await api("GET", `/api/rooms/${code}`)).data.room.participants.filter((p) => p.kind === "model").length, 0, "the refused invite joined nobody");
+
+    const invited = await api("POST", `/api/rooms/${code}/invite`, { kind: "model", profile: "echo", name: " echo " });
+    assert.equal(invited.status, 200, "the profile's own name, however spaced or cased, is accepted");
     assert.equal(invited.data.participant.name, "Echo");
     let room = await waitFor((r) => r.participants.some((p) => p.name === "Echo" && p.kind === "model"));
 
