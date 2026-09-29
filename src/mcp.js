@@ -96,7 +96,7 @@ const TOOLS = [
         profile: { type: "string", description: "Model profile key when kind is model." },
         harness: { type: "string", description: "Harness name when kind is harness, as an online runner offers it (see room_status or the health endpoint)." },
         runner: { type: "string", description: "A specific runner to use when kind is harness; otherwise the least busy one that offers the harness." },
-        name: { type: "string", description: "Display name for a model, or the invited session's name." },
+        name: { type: "string", description: "The invited session's name when kind is session. A model participant is always named by its profile's display_name, so passing a different name here is refused." },
         reason: { type: "string", description: "Why a human is needed, when kind is human." },
       },
       required: ["code", "kind"],

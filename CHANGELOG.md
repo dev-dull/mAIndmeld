@@ -6,6 +6,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- A model participant is named by its profile's `display_name` and nothing
+  else: `room_invite` no longer lets a caller name one, which could
+  attribute a model's answers to a different model for the life of the
+  transcript and of every decision drawn from it (#57). An invite that asks
+  for another name is refused with the profile's own name, so a caller
+  working from a stale one hears about it immediately.
+
 ## [0.5.4] - 2026-09-26
 
 ### Fixed

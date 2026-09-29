@@ -1306,7 +1306,15 @@ export function createApp(config = loadConfig()) {
         const profileKey = String(body.profile ?? "");
         const profile = config.profiles[profileKey];
         if (!profile) throw new HttpError(404, `no model profile named ${profileKey}; configured: ${Object.keys(config.profiles).join(", ") || "none"}`);
-        const name = rooms.cleanName(body.name || profile.displayName);
+        // A model participant is named by its profile, so a transcript always
+        // attributes an answer to the model that produced it (#57). A caller asking
+        // for another name is refused rather than quietly overridden: it would go on
+        // addressing a participant that is not in the room.
+        const name = rooms.cleanName(profile.displayName);
+        const asked = body.name === undefined || body.name === null ? "" : String(body.name).trim();
+        if (asked && asked.toLowerCase() !== name.toLowerCase()) {
+          throw new HttpError(400, `a model participant is named by its profile: ${profileKey} is "${name}", not "${asked}"`);
+        }
         const key = `${code}:${name.toLowerCase()}`;
         if (models.has(key) && !models.get(key).stopped) return { participant: models.get(key).status(), rejoined: true };
         const { participant } = await withRoom(code, (room) => rooms.joinRoom(room, { name, kind: "model", client: profileKey }));

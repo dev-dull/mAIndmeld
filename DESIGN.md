@@ -527,6 +527,16 @@ prompt file, transcript window in messages, and a per-room reply budget so
 a chatty model cannot run a room by itself. Profiles are the same shape as
 summarizer adapters of the OpenAI-compatible kind and share code.
 
+The participant's name in the room is the profile's `display_name` as it
+reads at join time, and an inviting caller may not choose another one (#57).
+Attribution in a transcript, and in the decisions drawn from it, is only
+worth anything if the name beside a statement is the model that produced it;
+a caller that could name a participant freely could silently credit one
+model's answer to another. An invite that asks for a different name is
+refused with the profile's own, rather than overridden quietly, so a caller
+working from a stale name is told at once instead of going on to address a
+participant that is not there.
+
 Model participants respect `addressed_only` and a minimum gap between their
 own replies. They never file `close` and are not eligible to vote on it;
 they may file `call_human` and vote on it.
