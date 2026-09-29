@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-09-28
+
 ### Fixed
 - A model participant is named by its profile's `display_name` and nothing
   else: `room_invite` no longer lets a caller name one, which could
@@ -231,7 +233,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Notifiers: webhook, ntfy, desktop.
 - Docker image, compose demo, CI, security policy.
 
-[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.5.4...HEAD
+[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.5
 [0.5.4]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.4
 [0.5.3]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.3
 [0.5.2]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.2
