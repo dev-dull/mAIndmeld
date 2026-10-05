@@ -1532,7 +1532,7 @@ export function createApp(config = loadConfig()) {
       if (code === "search") {
         const q = url.searchParams.get("q") || "";
         if (!q.trim()) throw new HttpError(400, "q is required");
-        const results = await service.kb.search(q, { k: Number(url.searchParams.get("k")) || 5, topic: url.searchParams.get("topic") || undefined, includeInactive: url.searchParams.get("all") === "1" });
+        const results = await service.kb.search(q, { k: Number(url.searchParams.get("k")) || 5, topic: url.searchParams.get("topic") || undefined, includeInactive: url.searchParams.get("all") === "1", rationale: url.searchParams.get("rationale") === "1" });
         return send(res, 200, { query: q, results, embeddings: service.kb.embeddings() });
       }
       throw new HttpError(404, "not found");
@@ -1689,6 +1689,7 @@ export function createApp(config = loadConfig()) {
       if (parts[0] === "rooms" && parts.length === 2 && isRoomCode(parts[1])) return serveStatic(res, "room.html");
       if (parts[0] === "notes" && parts.length === 2 && /^M\d{8}-[A-Z0-9]{4}$/.test(parts[1])) return serveStatic(res, "note.html");
       if (parts[0] === "sweeps" && parts.length === 1) return serveStatic(res, "sweeps.html");
+      if (parts[0] === "kb" && parts.length === 1) return serveStatic(res, "kb.html");
       if (parts[0] === "static" && parts.length === 2) return serveStatic(res, parts[1]);
       throw new HttpError(404, "not found");
     } catch (error) {

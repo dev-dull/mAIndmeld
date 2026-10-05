@@ -128,11 +128,20 @@ export class EmbeddingStore {
 /** Text embedded for a decision: what retrieval should match. */
 export const embeddingText = (d) => `${d.topic.replace(/-/g, " ")}: ${d.statement}${d.rationale ? ` ${d.rationale}` : ""}`;
 
+/** How much stored rationale a result carries when it is asked for. */
+export const RATIONALE_CHARS = 400;
+
+function clipRationale(text) {
+  const value = String(text ?? "").trim();
+  if (value.length <= RATIONALE_CHARS) return value;
+  return `${value.slice(0, RATIONALE_CHARS).trimEnd()}…`;
+}
+
 /**
  * Search over the knowledge store. `embedder` and `embeddings` are optional.
  * Returns up to k results, active by default, best first.
  */
-export async function search(kb, query, { k = 5, topic, includeInactive = false, embedder = null, embeddings = null, cache = null } = {}) {
+export async function search(kb, query, { k = 5, topic, includeInactive = false, rationale = false, embedder = null, embeddings = null, cache = null } = {}) {
   const q = String(query ?? "").trim();
   if (!q) return [];
   let decisions = kb.decisions();
@@ -179,6 +188,9 @@ export async function search(kb, query, { k = 5, topic, includeInactive = false,
     date: d.date,
     status: d.status,
     provisional: Boolean(d.provisional),
+    // Injection at join time is push, so it stays statements only; a search is
+    // pull, so a caller that asks gets the reasoning it already stored.
+    ...(rationale ? { rationale: clipRationale(d.rationale) } : {}),
     score: Number(score.toFixed(3)),
     keyword: Number(keyword.toFixed(3)),
     vector: vector === null ? null : Number(vector.toFixed(3)),

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Decisions · mAIndmeld</title>
+  <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.ico" sizes="32x32 48x48">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-page="kb">
+  <header class="top">
+    <div><a class="brand" href="/"><img class="logo" src="/static/logo.svg" alt="" width="24" height="24">mAIndmeld</a> &nbsp;·&nbsp; Decisions</div>
+    <span><a href="/sweeps">Sweeps</a></span>
+    <span class="who" id="who"></span>
+  </header>
+  <main>
+    <form class="kb-search" id="kb-form">
+      <input id="kb-q" type="search" maxlength="200" placeholder="What has already been decided about…" aria-label="Search the decisions" autocomplete="off">
+      <select id="kb-topic" aria-label="Topic"><option value="">Every topic</option></select>
+      <select id="kb-k" aria-label="How many results">
+        <option value="5">5 results</option>
+        <option value="10">10 results</option>
+        <option value="25">25 results</option>
+      </select>
+      <button class="primary" type="submit">Search</button>
+      <label class="inline"><input type="checkbox" id="kb-all"> Show superseded</label>
+    </form>
+    <p class="hint" id="kb-how"></p>
+    <div id="kb-results"><div class="empty">Loading the topics…</div></div>
+  </main>
+  <div class="toast" id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
