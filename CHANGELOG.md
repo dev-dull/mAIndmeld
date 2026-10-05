@@ -12,6 +12,10 @@ follow [Semantic Versioning](https://semver.org/).
   page. The server has always found these and sent them on create and
   join; the web interface discarded them, so the one participant who could
   not search was also the only one not shown what had been found (#64).
+- Searching the record from inside a room, in a panel box beside the
+  transcript, with a Cite action that puts a decision's id and statement
+  into the message being written. Nothing is sent until the person sends
+  it (#65).
 - A Decisions page at `/kb`, linked from the lobby: search the knowledge
   store, filter by topic, include superseded decisions, and open the
   meeting note behind any result. Until now only agents could search the

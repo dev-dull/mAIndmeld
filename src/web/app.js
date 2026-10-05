@@ -621,6 +621,46 @@ function renderPrior(list) {
   box.classList.remove("hidden");
 }
 
+/**
+ * Searching the record without leaving the room. Same endpoint and same card as
+ * /kb; the only addition is Cite, which puts a decision in the composer so the
+ * room can see what a claim rests on. Deliberate submit, as on the page.
+ */
+function initRoomSearch(code) {
+  const form = $("#room-kb-form");
+  const box = $("#room-kb-results");
+  if (!form || !box) return;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const q = $("#room-kb-q").value.trim();
+    if (q.length < 2) {
+      box.innerHTML = '<div class="empty">Two characters or more.</div>';
+      return;
+    }
+    box.innerHTML = '<div class="empty">Searching…</div>';
+    try {
+      const r = await api("GET", `/api/kb/search?${new URLSearchParams({ q, k: "5" })}`);
+      box.innerHTML = r.results.length
+        ? r.results.map((d) => decisionCard(d, { compact: true, cite: true })).join("")
+        : `<div class="empty">Nothing on record for “${esc(q)}”.</div>`;
+    } catch (error) {
+      box.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+    }
+  });
+  box.addEventListener("click", (e) => {
+    const btn = e.target.closest("button.cite");
+    if (!btn) return;
+    const textarea = $("#composer textarea");
+    if (!textarea) return;
+    const text = `${btn.dataset.cite}: ${btn.dataset.statement}`;
+    const sep = textarea.value && !textarea.value.endsWith("\n") ? "\n" : "";
+    textarea.value += `${sep}${text}`;
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    toast("Added to your message");
+  });
+}
+
 function initRoom() {
   const code = location.pathname.split("/")[2];
   (async () => {
@@ -628,6 +668,8 @@ function initRoom() {
     await loadRoom(code);
     renderPrior(takeStashedPrior(code));
   })().catch((e) => toast(e.message));
+
+  initRoomSearch(code);
 
   const es = new EventSource(`/api/rooms/${code}/events`);
   es.addEventListener("message", (e) => {
@@ -847,7 +889,7 @@ const clampReason = (text) => {
   return value.length <= RATIONALE_CHARS ? value : `${value.slice(0, RATIONALE_CHARS).trimEnd()}…`;
 };
 
-function decisionCard(d, { compact = false } = {}) {
+function decisionCard(d, { compact = false, cite = false } = {}) {
   const reason = compact ? "" : clampReason(d.rationale);
   const marks = [
     d.status && d.status !== "active" ? `<span class="badge status">${esc(d.status)}</span>` : "",
@@ -864,6 +906,7 @@ function decisionCard(d, { compact = false } = {}) {
       <span>${esc(d.date || "")}</span>
       <code>${esc(d.id)}</code>
       ${d.meeting ? `<a href="/notes/${encodeURIComponent(d.meeting)}">${compact ? "note" : "the meeting note"}</a>` : ""}
+      ${cite ? `<button type="button" class="small cite" data-cite="${esc(d.id)}" data-statement="${esc(d.statement)}">Cite</button>` : ""}
     </div>
   </article>`;
 }
