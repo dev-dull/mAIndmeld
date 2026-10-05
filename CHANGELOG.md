@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-05
+
 ### Added
 - The room page shows what earlier meetings already decided about its
   objective, in an "Already decided" box with a link into the Decisions
@@ -252,7 +254,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Notifiers: webhook, ntfy, desktop.
 - Docker image, compose demo, CI, security policy.
 
-[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.6.0
 [0.5.5]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.5
 [0.5.4]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.4
 [0.5.3]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.3
