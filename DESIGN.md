@@ -585,6 +585,12 @@ already, so no join carries them: the lobby stashes what creation found and
 the room page renders it once. The projection stays statements only, plus the
 meeting id so a reader can open the note behind one.
 
+The room also carries the search itself, in a box beside the transcript, so
+"has this been decided?" can be answered without leaving the meeting. It is
+the same endpoint and the same card as `/kb`; the one addition is Cite, which
+puts a decision's id and statement into the composer rather than sending
+anything, so the person decides what the room sees.
+
 ## 8. Web chat interface
 
 Served by the server at the loopback origin, vanilla HTML and JavaScript,
