@@ -617,7 +617,9 @@ function renderPrior(list) {
     box.classList.add("hidden");
     return;
   }
-  $("#prior").innerHTML = list.map((d) => decisionCard(d, { compact: true })).join("");
+  // Cite here too: the same decision must not offer an action in one panel and
+  // withhold it in the other, and these are the ones the server thought relevant.
+  $("#prior").innerHTML = list.map((d) => decisionCard(d, { compact: true, cite: true })).join("");
   box.classList.remove("hidden");
 }
 
@@ -647,18 +649,21 @@ function initRoomSearch(code) {
       box.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
     }
   });
-  box.addEventListener("click", (e) => {
-    const btn = e.target.closest("button.cite");
-    if (!btn) return;
-    const textarea = $("#composer textarea");
-    if (!textarea) return;
-    const text = `${btn.dataset.cite}: ${btn.dataset.statement}`;
-    const sep = textarea.value && !textarea.value.endsWith("\n") ? "\n" : "";
-    textarea.value += `${sep}${text}`;
-    textarea.focus();
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-    toast("Added to your message");
-  });
+  for (const host of [box, $("#prior")]) host?.addEventListener("click", onCite);
+}
+
+/** Put a decision into the composer. Never sends: the person decides what the room sees. */
+function onCite(e) {
+  const btn = e.target.closest("button.cite");
+  if (!btn) return;
+  const textarea = $("#composer textarea");
+  if (!textarea) return;
+  const text = `${btn.dataset.cite}: ${btn.dataset.statement}`;
+  const sep = textarea.value && !textarea.value.endsWith("\n") ? "\n" : "";
+  textarea.value += `${sep}${text}`;
+  textarea.focus();
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  toast("Added to your message");
 }
 
 function initRoom() {
