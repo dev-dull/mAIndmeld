@@ -41,6 +41,8 @@ test("search endpoint and join-time injection, capped", async () => {
     assert.ok(created.data.prior_decisions.length <= 3, "capped by inject_limit");
     assert.ok(created.data.prior_decisions.length >= 2);
     assert.ok(created.data.prior_decisions.every((d) => d.statement && d.id && !("rationale" in d)), "statements only");
+    assert.ok(created.data.prior_decisions.every((d) => d.meeting), "each carries its meeting, so a reader can open the note");
+    assert.ok(created.data.prior_decisions.every((d) => Object.keys(d).sort().join() === "date,id,meeting,statement,topic"), "and nothing else rides along");
     const joined = await s.req("POST", `/api/rooms/${created.data.room.code}/join`, { body: { name: "b" } });
     assert.ok(joined.data.prior_decisions.some((d) => d.id === "D-3"));
     const quiet = await s.req("POST", "/api/rooms", { body: { title: "Lunch", objective: "Where to eat", name: "a" } });

@@ -7,6 +7,11 @@ follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- The room page shows what earlier meetings already decided about its
+  objective, in an "Already decided" box with a link into the Decisions
+  page. The server has always found these and sent them on create and
+  join; the web interface discarded them, so the one participant who could
+  not search was also the only one not shown what had been found (#64).
 - A Decisions page at `/kb`, linked from the lobby: search the knowledge
   store, filter by topic, include superseded decisions, and open the
   meeting note behind any result. Until now only agents could search the
