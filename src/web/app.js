@@ -787,7 +787,17 @@ async function renderBrief(code) {
  * One decision, as the /kb page and the room panel both draw it. Shared on
  * purpose: a result should look the same wherever a person meets it.
  */
+// Matches RATIONALE_CHARS on the server. Search truncates on the wire, but a
+// browse returns the stored record whole, so the clamp lives here as well and
+// both paths, and the room panel, show a decision the same way.
+const RATIONALE_CHARS = 400;
+const clampReason = (text) => {
+  const value = String(text ?? "").trim();
+  return value.length <= RATIONALE_CHARS ? value : `${value.slice(0, RATIONALE_CHARS).trimEnd()}…`;
+};
+
 function decisionCard(d) {
+  const reason = clampReason(d.rationale);
   const marks = [
     d.status && d.status !== "active" ? `<span class="badge status">${esc(d.status)}</span>` : "",
     d.provisional ? '<span class="badge status">provisional</span>' : "",
@@ -797,7 +807,7 @@ function decisionCard(d) {
       <span class="card-title">${esc(d.statement)}</span>
       ${marks}
     </div>
-    ${d.rationale ? `<div class="reason">${esc(d.rationale)}</div>` : ""}
+    ${reason ? `<div class="reason">${esc(reason)}</div>` : ""}
     <div class="card-meta">
       <span class="badge status">${esc(d.topic)}</span>
       <span>${esc(d.date || "")}</span>
