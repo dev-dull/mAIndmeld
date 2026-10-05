@@ -297,3 +297,10 @@ button.topic .count { color: var(--muted); font-variant-numeric: tabular-nums; }
 }
 .decisions.compact .card-meta { font-size: 0.72rem; gap: 0.35rem; row-gap: 0.1rem; }
 #prior-box a.hint { display: inline-block; margin-top: 0.5rem; }
+
+/* The record, searched from inside a room. */
+.kb-search.compact { display: flex; flex-wrap: nowrap; gap: 0.35rem; margin-bottom: 0.5rem; }
+.kb-search.compact button { flex: none; }
+.kb-search.compact input[type="search"] { flex: 1 1 auto; min-width: 0; }
+#room-kb-results:empty { display: none; }
+.decisions.compact button.cite { padding: 0.05rem 0.4rem; font-size: 0.7rem; }

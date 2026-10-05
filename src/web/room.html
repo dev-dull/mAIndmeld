@@ -78,6 +78,14 @@
         <div class="decisions compact" id="prior"></div>
         <a class="hint" href="/kb">Search the whole record</a>
       </div>
+      <div class="panel-box room" id="kb-box">
+        <h3>The record</h3>
+        <form class="kb-search compact" id="room-kb-form">
+          <input id="room-kb-q" type="search" maxlength="200" placeholder="Has this been decided?" aria-label="Search the decisions" autocomplete="off">
+          <button type="submit">Search</button>
+        </form>
+        <div class="decisions compact" id="room-kb-results"></div>
+      </div>
       <div class="panel-box room" id="motion-box">
         <h3>Motions</h3>
         <div id="motions"><div class="empty">None open.</div></div>
