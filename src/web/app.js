@@ -609,8 +609,14 @@ function renderPrior(list) {
   const box = $("#prior-box");
   if (!box) return;
   // The field is always an array when it arrives and may be empty; anything else
-  // means the search failed, and a room page is not the place to say so.
-  if (!Array.isArray(list) || !list.length) return;
+  // means the search failed, and a room page is not the place to say so. Hiding
+  // rather than returning keeps the function total: no caller can leave a
+  // previous render on screen by handing this one nothing.
+  if (!Array.isArray(list) || !list.length) {
+    $("#prior").innerHTML = "";
+    box.classList.add("hidden");
+    return;
+  }
   $("#prior").innerHTML = list.map((d) => decisionCard(d, { compact: true })).join("");
   box.classList.remove("hidden");
 }
