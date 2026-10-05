@@ -70,7 +70,10 @@ embedding model, run `maindmeld kb reindex` (`POST /api/kb/index`) once
 to embed the decisions already in the store; it reports how many vectors
 it wrote, and `/api/health` shows the total under `search.vectors`.
 
-A person reads the same record at `/kb`, linked from the lobby: a search
+A room page shows what earlier meetings already settled about its
+objective, in an "Already decided" box, from the same search the server has
+always run on create and join. A person reads the wider record at `/kb`,
+linked from the lobby: a search
 box, a topic filter, a toggle for superseded decisions, and results that
 carry the stored rationale and link to the meeting note behind them. The
 page says whether it is matching on keywords alone or blending in

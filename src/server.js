@@ -273,7 +273,9 @@ export function createApp(config = loadConfig()) {
       const results = await searchDecisions(`${room.title} ${room.objective}`, { k: config.search.injectLimit });
       // Keyword scores tail off into noise; keep only results near the best one.
       const top = results[0]?.score || 0;
-      return results.filter((r) => r.score >= top * 0.3).map(({ id, topic, statement, date }) => ({ id, topic, statement, date }));
+      // `meeting` rides along so a reader can open the note behind a decision;
+      // everything else about the result stays out, statements only (DESIGN 7.5).
+      return results.filter((r) => r.score >= top * 0.3).map(({ id, topic, statement, date, meeting }) => ({ id, topic, statement, date, meeting }));
     } catch (error) {
       log(`prior decisions for ${room.code}: ${error.message}`);
       return [];

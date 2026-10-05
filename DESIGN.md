@@ -576,6 +576,15 @@ deliberate submit, since every query is embedded through the configured
 profile and a keystroke-triggered search would spend a provider request per
 character.
 
+A room shows the same record without being asked. The server already finds
+the decisions that match a new room's objective and returns them as
+`prior_decisions` on create and join, which every agent receives; the room
+page now shows them in an "Already decided" box with a link into `/kb`, so a
+decision that raises a question leads somewhere. A creator is a participant
+already, so no join carries them: the lobby stashes what creation found and
+the room page renders it once. The projection stays statements only, plus the
+meeting id so a reader can open the note behind one.
+
 ## 8. Web chat interface
 
 Served by the server at the loopback origin, vanilla HTML and JavaScript,
