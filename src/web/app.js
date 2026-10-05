@@ -156,7 +156,10 @@ function initLobby() {
     e.preventDefault();
     try {
       const invite_models = [...document.querySelectorAll('#new-models-list input:checked')].map((i) => i.value);
-      const { room } = await api("POST", "/api/rooms", { title: $("#new-title").value, objective: $("#new-objective").value, invite_models: invite_models.length ? invite_models : undefined });
+      const { room, prior_decisions } = await api("POST", "/api/rooms", { title: $("#new-title").value, objective: $("#new-objective").value, invite_models: invite_models.length ? invite_models : undefined });
+      // The creator is already a participant, so no join will carry these: stash
+      // them for the room page, which is the moment they matter most.
+      stashPrior(room.code, prior_decisions);
       location.href = `/rooms/${room.code}`;
     } catch (error) {
       toast(error.message);
@@ -568,7 +571,48 @@ async function loadRoom(code) {
 
 async function ensureJoined(code) {
   const inRoom = state.room.participants.some((p) => p.name.toLowerCase() === state.me.name.toLowerCase());
-  if (!inRoom) await api("POST", `/api/rooms/${code}/join`, { kind: "human" });
+  if (!inRoom) {
+    const joined = await api("POST", `/api/rooms/${code}/join`, { kind: "human" });
+    renderPrior(joined.prior_decisions);
+  }
+}
+
+/**
+ * What earlier meetings already settled about this room's objective. The server
+ * finds it on create and on join and has always sent it; until now the browser
+ * dropped it, so the one participant who could not search was also the only one
+ * not shown what had been found for them.
+ */
+const priorKey = (code) => `mm:prior:${code}`;
+
+function stashPrior(code, list) {
+  if (!Array.isArray(list) || !list.length) return;
+  try {
+    sessionStorage.setItem(priorKey(code), JSON.stringify(list));
+  } catch {
+    // A browser that refuses storage simply does not carry them over.
+  }
+}
+
+function takeStashedPrior(code) {
+  try {
+    const raw = sessionStorage.getItem(priorKey(code));
+    sessionStorage.removeItem(priorKey(code));
+    const list = raw ? JSON.parse(raw) : null;
+    return Array.isArray(list) ? list : null;
+  } catch {
+    return null;
+  }
+}
+
+function renderPrior(list) {
+  const box = $("#prior-box");
+  if (!box) return;
+  // The field is always an array when it arrives and may be empty; anything else
+  // means the search failed, and a room page is not the place to say so.
+  if (!Array.isArray(list) || !list.length) return;
+  $("#prior").innerHTML = list.map((d) => decisionCard(d, { compact: true })).join("");
+  box.classList.remove("hidden");
 }
 
 function initRoom() {
@@ -576,6 +620,7 @@ function initRoom() {
   (async () => {
     state.me = await whoAmI();
     await loadRoom(code);
+    renderPrior(takeStashedPrior(code));
   })().catch((e) => toast(e.message));
 
   const es = new EventSource(`/api/rooms/${code}/events`);
@@ -796,15 +841,15 @@ const clampReason = (text) => {
   return value.length <= RATIONALE_CHARS ? value : `${value.slice(0, RATIONALE_CHARS).trimEnd()}…`;
 };
 
-function decisionCard(d) {
-  const reason = clampReason(d.rationale);
+function decisionCard(d, { compact = false } = {}) {
+  const reason = compact ? "" : clampReason(d.rationale);
   const marks = [
     d.status && d.status !== "active" ? `<span class="badge status">${esc(d.status)}</span>` : "",
     d.provisional ? '<span class="badge status">provisional</span>' : "",
   ].filter(Boolean).join(" ");
   return `<article class="decision${d.status && d.status !== "active" ? " inactive" : ""}">
     <div class="card-head">
-      <span class="card-title">${esc(d.statement)}</span>
+      <span class="card-title"${compact ? ` title="${esc(d.statement)}"` : ""}>${esc(d.statement)}</span>
       ${marks}
     </div>
     ${reason ? `<div class="reason">${esc(reason)}</div>` : ""}
@@ -812,7 +857,7 @@ function decisionCard(d) {
       <span class="badge status">${esc(d.topic)}</span>
       <span>${esc(d.date || "")}</span>
       <code>${esc(d.id)}</code>
-      ${d.meeting ? `<a href="/notes/${encodeURIComponent(d.meeting)}">the meeting note</a>` : ""}
+      ${d.meeting ? `<a href="/notes/${encodeURIComponent(d.meeting)}">${compact ? "note" : "the meeting note"}</a>` : ""}
     </div>
   </article>`;
 }
@@ -852,7 +897,7 @@ function initKb() {
     const { decisions } = await api("GET", `/api/kb/decisions?${params}`);
     const ordered = [...decisions].sort((a, b) => String(b.date).localeCompare(String(a.date)));
     how.textContent = `${ordered.length} decision${ordered.length === 1 ? "" : "s"} under ${topic}${$("#kb-all").checked ? ", superseded included" : ""}. Search to narrow it.`;
-    results.innerHTML = ordered.length ? ordered.map(decisionCard).join("") : `<div class="empty">Nothing under ${esc(topic)}.</div>`;
+    results.innerHTML = ordered.length ? ordered.map((d) => decisionCard(d)).join("") : `<div class="empty">Nothing under ${esc(topic)}.</div>`;
   }
 
   async function run() {
@@ -872,7 +917,7 @@ function initKb() {
         ? `Keywords blended with meaning, using ${r.embeddings.model}.`
         : "Keyword matching only: no embeddings profile is configured.";
       results.innerHTML = r.results.length
-        ? r.results.map(decisionCard).join("")
+        ? r.results.map((d) => decisionCard(d)).join("")
         : `<div class="empty">Nothing on record for “${esc(q)}”${topic ? ` under ${esc(topic)}` : ""}.</div>`;
     } catch (error) {
       results.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
