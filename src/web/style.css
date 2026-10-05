@@ -269,3 +269,19 @@ fieldset.models input { width: auto; }
 .login p { margin: 0; color: var(--muted); font-size: 0.9rem; }
 .error { color: var(--danger); font-size: 0.9rem; }
 code { font-family: "JetBrains Mono", Menlo, monospace; font-size: 0.9em; }
+
+/* ---- decisions (the /kb page and the room panel) ---- */
+.kb-search { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
+.kb-search input[type="search"] { flex: 1 1 18rem; min-width: 0; }
+label.inline { display: inline-flex; flex-direction: row; align-items: center; gap: 0.35rem; white-space: nowrap; flex: none; }
+.topic-list { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+button.topic { font-size: 0.85rem; }
+button.topic .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+#kb-results { display: grid; gap: 0.5rem; }
+.decision {
+  display: grid; gap: 0.35rem; background: var(--surface); border: 1px solid var(--line);
+  border-left: 4px solid var(--accent); border-radius: 8px; padding: 0.7rem 1rem;
+}
+.decision.inactive { border-left-color: var(--muted); opacity: 0.75; }
+.decision .card-title { font-weight: 600; }
+.decision .reason { color: var(--muted); font-size: 0.9rem; overflow-wrap: anywhere; }

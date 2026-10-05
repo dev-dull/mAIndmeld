@@ -781,9 +781,105 @@ async function renderBrief(code) {
   }
 }
 
+// ---------- decisions (the knowledge store) ----------
+
+/**
+ * One decision, as the /kb page and the room panel both draw it. Shared on
+ * purpose: a result should look the same wherever a person meets it.
+ */
+function decisionCard(d) {
+  const marks = [
+    d.status && d.status !== "active" ? `<span class="badge status">${esc(d.status)}</span>` : "",
+    d.provisional ? '<span class="badge status">provisional</span>' : "",
+  ].filter(Boolean).join(" ");
+  return `<article class="decision${d.status && d.status !== "active" ? " inactive" : ""}">
+    <div class="card-head">
+      <span class="card-title">${esc(d.statement)}</span>
+      ${marks}
+    </div>
+    ${d.rationale ? `<div class="reason">${esc(d.rationale)}</div>` : ""}
+    <div class="card-meta">
+      <span class="badge status">${esc(d.topic)}</span>
+      <span>${esc(d.date || "")}</span>
+      <code>${esc(d.id)}</code>
+      ${d.meeting ? `<a href="/notes/${encodeURIComponent(d.meeting)}">the meeting note</a>` : ""}
+    </div>
+  </article>`;
+}
+
+function initKb() {
+  whoAmI().catch(() => {});
+  const results = $("#kb-results");
+  const how = $("#kb-how");
+
+  // Empty query: the topics, so the page says something before anyone types.
+  async function showTopics() {
+    // status=active on purpose: /api/kb/decisions returns superseded ones too,
+    // and the counts here are meant to say what still stands.
+    const [{ topics }, { decisions }] = await Promise.all([api("GET", "/api/kb/topics"), api("GET", "/api/kb/decisions?status=active")]);
+    how.textContent = `${decisions.length} active decision${decisions.length === 1 ? "" : "s"} across ${topics.length} topic${topics.length === 1 ? "" : "s"}. Search, or pick a topic.`;
+    const counts = new Map();
+    for (const d of decisions) counts.set(d.topic, (counts.get(d.topic) || 0) + 1);
+    const named = topics.map((t) => t.name);
+    for (const t of counts.keys()) if (!named.includes(t)) named.push(t);
+    $("#kb-topic").innerHTML = ['<option value="">Every topic</option>', ...named.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`)].join("");
+    results.innerHTML = named.length
+      ? `<div class="topic-list">${named.map((t) => `<button class="topic" data-topic="${esc(t)}">${esc(t)} <span class="count">${counts.get(t) || 0}</span></button>`).join("")}</div>`
+      : '<div class="empty">The store holds no decisions yet. Close a room and its note lands here.</div>';
+    for (const b of results.querySelectorAll("button.topic")) {
+      b.addEventListener("click", () => {
+        $("#kb-topic").value = b.dataset.topic;
+        run();
+      });
+    }
+  }
+
+  // A topic with no query is a browse, not a search: list what stands under it.
+  async function browseTopic(topic) {
+    const params = new URLSearchParams({ topic });
+    if (!$("#kb-all").checked) params.set("status", "active");
+    results.innerHTML = '<div class="empty">Loading…</div>';
+    const { decisions } = await api("GET", `/api/kb/decisions?${params}`);
+    const ordered = [...decisions].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    how.textContent = `${ordered.length} decision${ordered.length === 1 ? "" : "s"} under ${topic}${$("#kb-all").checked ? ", superseded included" : ""}. Search to narrow it.`;
+    results.innerHTML = ordered.length ? ordered.map(decisionCard).join("") : `<div class="empty">Nothing under ${esc(topic)}.</div>`;
+  }
+
+  async function run() {
+    const q = $("#kb-q").value.trim();
+    const topic = $("#kb-topic").value;
+    if (q.length < 2) {
+      const next = topic ? browseTopic(topic) : showTopics();
+      return next.catch((e) => { results.innerHTML = `<div class="empty">${esc(e.message)}</div>`; });
+    }
+    const params = new URLSearchParams({ q, k: $("#kb-k").value, rationale: "1" });
+    if (topic) params.set("topic", topic);
+    if ($("#kb-all").checked) params.set("all", "1");
+    results.innerHTML = '<div class="empty">Searching…</div>';
+    try {
+      const r = await api("GET", `/api/kb/search?${params}`);
+      how.textContent = r.embeddings?.enabled
+        ? `Keywords blended with meaning, using ${r.embeddings.model}.`
+        : "Keyword matching only: no embeddings profile is configured.";
+      results.innerHTML = r.results.length
+        ? r.results.map(decisionCard).join("")
+        : `<div class="empty">Nothing on record for “${esc(q)}”${topic ? ` under ${esc(topic)}` : ""}.</div>`;
+    } catch (error) {
+      results.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+    }
+  }
+
+  // Deliberate submit, never as-you-type: every query is embedded through the
+  // configured profile, so a keystroke would cost a provider request.
+  $("#kb-form").addEventListener("submit", (e) => { e.preventDefault(); run(); });
+  for (const id of ["#kb-topic", "#kb-k", "#kb-all"]) $(id).addEventListener("change", () => run());
+  showTopics().catch((e) => { results.innerHTML = `<div class="empty">${esc(e.message)}</div>`; });
+}
+
 const page = document.body.dataset.page;
 if (page === "login") initLogin();
 if (page === "lobby") initLobby();
 if (page === "room") initRoom();
 if (page === "note") initNote();
 if (page === "sweeps") initSweeps();
+if (page === "kb") initKb();

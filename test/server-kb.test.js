@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { boot } from "./helpers.js";
 import { KnowledgeStore } from "../src/kb.js";
+import { RATIONALE_CHARS } from "../src/search.js";
 
 const D = (id, topic, statement, date, extra = {}) => ({ id, meeting: `M-${id}`, topic, status: "active", statement, rationale: "", date, created_at: `${date}T12:00:00Z`, supersedes: [], ...extra });
 
@@ -182,5 +183,35 @@ test("POST /api/kb/index backfills embeddings in chunks; GET stays a read", asyn
   } finally {
     await s.close();
     stub.close();
+  }
+});
+
+test("search carries the stored rationale only when it is asked for, truncated", async () => {
+  const s = await boot();
+  try {
+    const kb = new KnowledgeStore(s.config.kbDir);
+    const long = `Because ${"the reasoning runs on and on. ".repeat(40)}`;
+    kb.saveTopics([{ name: "retry-policy", description: "", aliases: [], created: "2026-09-01" }]);
+    kb.saveDecisions([
+      { ...D("D-1", "retry-policy", "Retries are capped at three attempts with exponential backoff.", "2026-09-01"), rationale: long },
+      { ...D("D-2", "retry-policy", "Only idempotent operations are retried.", "2026-09-02"), rationale: "" },
+    ]);
+    kb.writeIndex();
+
+    const plain = await s.req("GET", "/api/kb/search?q=retries");
+    assert.equal(plain.status, 200);
+    assert.ok(plain.data.results.length >= 1);
+    assert.ok(plain.data.results.every((r) => !("rationale" in r)), "push stays statements only");
+
+    const full = await s.req("GET", "/api/kb/search?q=retries&rationale=1");
+    const first = full.data.results.find((r) => r.id === "D-1");
+    assert.ok(first, "the decision with a rationale came back");
+    assert.ok(first.rationale.startsWith("Because the reasoning runs on"));
+    assert.ok(first.rationale.length <= RATIONALE_CHARS + 1, `truncated to ${RATIONALE_CHARS}: ${first.rationale.length}`);
+    assert.ok(first.rationale.endsWith("\u2026"), "and says it was cut");
+    const second = full.data.results.find((r) => r.id === "D-2");
+    if (second) assert.equal(second.rationale, "", "an empty rationale stays empty, not missing");
+  } finally {
+    await s.close();
   }
 });

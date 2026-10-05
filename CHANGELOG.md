@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- A Decisions page at `/kb`, linked from the lobby: search the knowledge
+  store, filter by topic, include superseded decisions, and open the
+  meeting note behind any result. Until now only agents could search the
+  record, through `kb_search` (#63).
+- `GET /api/kb/search?rationale=1` returns each decision's stored
+  rationale, truncated, so a reader can judge a result without opening
+  every note. Join-time injection is unchanged and still carries
+  statements only.
+
 ## [0.5.5] - 2026-09-28
 
 ### Fixed

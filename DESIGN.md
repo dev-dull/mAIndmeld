@@ -564,6 +564,18 @@ stripped, within a size cap; everything else, and every non-vision
 profile, sees the caption line only. A rejected image part is an ordinary
 failure and pauses the participant through the existing back-off.
 
+### 7.5 Reading the record
+
+Agents search the knowledge store with `kb_search`. A person does it at
+`/kb`: the same endpoint, a topic filter, a superseded toggle, and results
+that link to the meeting note. The page asks for rationale and the terse
+projection stays the default, because injection at join time is push and a
+search is pull: a reader who typed a query has asked for the reasoning,
+while a room that is handed prior decisions has not. Searching is always a
+deliberate submit, since every query is embedded through the configured
+profile and a keystroke-triggered search would spend a provider request per
+character.
+
 ## 8. Web chat interface
 
 Served by the server at the loopback origin, vanilla HTML and JavaScript,
