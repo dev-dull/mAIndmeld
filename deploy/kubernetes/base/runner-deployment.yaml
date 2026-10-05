@@ -29,7 +29,7 @@ spec:
       containers:
         - name: runner
           # Same release as the server; pin by digest as with the server image.
-          image: ghcr.io/dev-dull/maindmeld-runner:0.5.5@sha256:fa50bc1e46ad34589c977b1456727db3fa41706011322df0ea2dbe6a61d1c94a
+          image: ghcr.io/dev-dull/maindmeld-runner:0.6.0@sha256:ca18dd0e5398751a132944fede4f8b2eee747031bdf7576f2821aa86fed7f556
           imagePullPolicy: IfNotPresent
           env:
             - name: MAINDMELD_RUNNER_CONFIG

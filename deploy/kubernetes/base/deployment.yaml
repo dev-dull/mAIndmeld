@@ -27,10 +27,10 @@ spec:
           type: RuntimeDefault
       containers:
         - name: maindmeld
-          # Pinned to the multi-arch index digest of the published 0.5.5 image.
-          # `docker buildx imagetools inspect ghcr.io/dev-dull/maindmeld:0.5.5`
+          # Pinned to the multi-arch index digest of the published 0.6.0 image.
+          # `docker buildx imagetools inspect ghcr.io/dev-dull/maindmeld:0.6.0`
           # prints the digest for a newer tag; keep the tag for readability.
-          image: ghcr.io/dev-dull/maindmeld:0.5.5@sha256:543ac5bc27adb6e723910635e380d1e2a2524bb6f75dcc5cf495918fe3948f69
+          image: ghcr.io/dev-dull/maindmeld:0.6.0@sha256:b2bdc7c12609b8eb1488e1d45f99e4518ac97fee4a3b41e76967acf8bae2b54e
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
