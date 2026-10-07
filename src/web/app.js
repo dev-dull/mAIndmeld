@@ -145,8 +145,10 @@ async function renderNoteDecisions(meetingId) {
         label: "Retire",
         verb: "Retire it",
         onConfirm: async (reason) => {
-          await api("POST", `/api/kb/decisions/${encodeURIComponent(d.id)}/retire`, { reason });
-          toast(`${d.id} retired`);
+          const { decision } = await api("POST", `/api/kb/decisions/${encodeURIComponent(d.id)}/retire`, { reason });
+          toast(decision.left_superseded?.length
+            ? `${d.id} retired; it replaced ${decision.left_superseded.join(", ")}, which stay superseded`
+            : `${d.id} retired`);
           renderNoteDecisions(meetingId);
         },
       }));
@@ -1037,7 +1039,7 @@ function initKb() {
     results.innerHTML = '<div class="empty">Loading…</div>';
     const { decisions } = await api("GET", `/api/kb/decisions?${params}`);
     const ordered = [...decisions].sort((a, b) => String(b.date).localeCompare(String(a.date)));
-    how.textContent = `${ordered.length} decision${ordered.length === 1 ? "" : "s"} under ${topic}${$("#kb-all").checked ? ", superseded included" : ""}. Search to narrow it.`;
+    how.textContent = `${ordered.length} decision${ordered.length === 1 ? "" : "s"} under ${topic}${$("#kb-all").checked ? ", including what was superseded or retired" : ""}. Search to narrow it.`;
     results.innerHTML = ordered.length ? ordered.map((d) => decisionCard(d)).join("") : `<div class="empty">Nothing under ${esc(topic)}.</div>`;
   }
 
