@@ -585,6 +585,16 @@ already, so no join carries them: the lobby stashes what creation found and
 the room page renders it once. The projection stays statements only, plus the
 meeting id so a reader can open the note behind one.
 
+Taking something out is the human end of the same rule (issue #13). Models
+propose supersession through the sweep and never apply it; a person retires a
+decision, or discards a note whose room should never have produced one. Both
+are refused unless the caller says who they act for. Neither deletes
+anything: status changes, the reason and the person are recorded on the row,
+retrieval and `INDEX.md` drop it, and the vector is removed, while the text
+and the note stay readable with inactive decisions shown. A record that could
+be erased would be worth less than one that cannot, so correction here means
+an attributable mark, never a gap.
+
 The room also carries the search itself, in a box beside the transcript, so
 "has this been decided?" can be answered without leaving the meeting. It is
 the same endpoint and the same card as `/kb`; the one addition is Cite, which

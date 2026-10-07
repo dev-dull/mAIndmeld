@@ -84,6 +84,14 @@ function frontMatter(obj) {
   return lines.join("\n");
 }
 
+export class KbError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.name = "KbError";
+    this.status = status;
+  }
+}
+
 export class KnowledgeStore {
   constructor(dir) {
     this.dir = dir;
@@ -177,6 +185,76 @@ export class KnowledgeStore {
     const m = this.listMeetings().find((x) => x.id === meetingId);
     if (!m) return null;
     return { ...m, markdown: fs.readFileSync(path.join(this.dir, m.file), "utf8") };
+  }
+
+  /**
+   * Retire one decision: a human says it should not have been in the record.
+   * Nothing is deleted. The text, the note behind it and the supersession chain
+   * all stay; the status changes so retrieval stops offering it, and who did it
+   * and why are written down beside it. Readable again with `all`.
+   */
+  retireDecision(id, { by, reason, now = new Date() }) {
+    const all = this.decisions();
+    const d = all.find((x) => x.id === id);
+    if (!d) throw new KbError(404, `no decision ${id}`);
+    if (d.status === "retired" || d.status === "retired_by_resummarize") throw new KbError(409, `decision ${id} is already ${d.status}`);
+    d.status = "retired";
+    d.retired_by = by;
+    d.retired_reason = reason || null;
+    d.updated_at = now.toISOString();
+    this.saveDecisions(all);
+    this.writeIndex();
+    // Retiring a decision does not revive what it replaced: that would be the
+    // system deciding. It does say so, because a topic can be left with nothing
+    // active and no sign of why. Returned on a copy, never stored: a stored row
+    // carries what was decided, not what one caller was told afterwards.
+    const leftSuperseded = (d.supersedes || []).filter((id) => {
+      const old = all.find((x) => x.id === id);
+      return old && old.status === "superseded";
+    });
+    return { ...d, left_superseded: leftSuperseded };
+  }
+
+  /**
+   * Discard a whole meeting note: a smoke test, a mistake, a room that should
+   * never have been summarized. The note stays on disk and stays readable by id;
+   * it leaves INDEX.md, and every decision it produced is retired with it.
+   */
+  discardMeeting(meetingId, { by, reason, now = new Date() }) {
+    const m = this.listMeetings().find((x) => x.id === meetingId);
+    if (!m) throw new KbError(404, `no meeting ${meetingId}`);
+    if (m.discarded) throw new KbError(409, `meeting ${meetingId} is already discarded`);
+    const file = path.join(this.dir, m.file);
+    const text = fs.readFileSync(file, "utf8");
+    const stamp = now.toISOString();
+
+    // Order matters, because three files cannot be written as one transaction.
+    // The decisions go first: they are what retrieval reads, so a failure part
+    // way through leaves things out of the record rather than left in it.
+    const all = this.decisions();
+    const retired = [];
+    // By its own meeting tag, and also by what the note says it produced: if the
+    // two ever disagree, a decision from a discarded note must not survive it.
+    const claimed = new Set(parseFrontMatter(text).decisions || []);
+    for (const d of all) {
+      if ((d.meeting !== meetingId && !claimed.has(d.id)) || d.status === "retired" || d.status === "retired_by_resummarize") continue;
+      d.status = "retired";
+      d.retired_by = by;
+      d.retired_reason = reason ? `${reason} (note discarded)` : "note discarded";
+      d.updated_at = stamp;
+      retired.push(d.id);
+    }
+    if (retired.length) this.saveDecisions(all);
+
+    const meta = { ...parseFrontMatter(text), discarded: true, discarded_by: by, discarded_reason: reason || null, discarded_at: stamp };
+    delete meta.file;
+    const marked = text.replace(/^---\n[\s\S]*?\n---/, frontMatter(meta));
+    // A note whose front matter did not match would otherwise be written back
+    // unchanged and reported as discarded.
+    if (marked === text) throw new KbError(500, `note ${meetingId} has no front matter to mark`);
+    this.writeAtomic(file, marked);
+    this.writeIndex();
+    return { meeting: { ...meta, file: m.file }, retired };
   }
 
   /**
@@ -294,13 +372,28 @@ export class KnowledgeStore {
 
   writeIndex() {
     const decisions = this.decisions();
-    const meetings = this.listMeetings();
+    // A discarded note keeps its file and its id, but leaves the index.
+    const meetings = this.listMeetings().filter((m) => !m.discarded);
     const topics = this.topics();
     const active = decisions.filter((d) => d.status === "active" && !d.provisional);
     const provisional = decisions.filter((d) => d.status === "active" && d.provisional);
+    const retired = decisions.filter((d) => d.status === "retired" || d.status === "retired_by_resummarize");
+    const discarded = this.listMeetings().filter((m) => m.discarded);
     const byTopic = new Map();
     for (const d of active) byTopic.set(d.topic, [...(byTopic.get(d.topic) || []), d]);
-    const lines = ["# mAIndmeld knowledge index", "", `Generated ${new Date().toISOString()}. ${meetings.length} meetings, ${active.length} active decisions, ${topics.length} topics.`, "", "## Active decisions by topic", ""];
+    const lines = [
+      "# mAIndmeld knowledge index",
+      "",
+      `Generated ${new Date().toISOString()}. ${meetings.length} meetings, ${active.length} active decisions, ${topics.length} topics.`,
+      // An index that silently omitted what a person took out would be claiming a
+      // completeness it does not have, so it says what is missing and where it went.
+      ...(retired.length || discarded.length
+        ? [`${retired.length} retired decision${retired.length === 1 ? "" : "s"} and ${discarded.length} discarded note${discarded.length === 1 ? "" : "s"} are listed at the end; they stay on disk and stay readable.`]
+        : []),
+      "",
+      "## Active decisions by topic",
+      "",
+    ];
     for (const t of [...byTopic.keys()].sort()) {
       lines.push(`### ${t}`, "");
       for (const d of byTopic.get(t)) lines.push(`- ${d.id} (${d.date}): ${d.statement}`);
@@ -318,6 +411,11 @@ export class KnowledgeStore {
     lines.push("", "## Recent meetings", "");
     for (const m of meetings.slice(0, 30)) lines.push(`- ${m.date} ${m.id}: ${m.title} (${(m.decisions || []).length} decisions) — ${m.file}`);
     if (!meetings.length) lines.push("None yet.");
+    if (retired.length || discarded.length) {
+      lines.push("", "## Taken out of the record", "", "Readable with inactive entries shown; nothing here was deleted.", "");
+      for (const d of retired) lines.push(`- ${d.id} (${d.topic}, ${d.date}) retired${d.retired_by ? ` by ${d.retired_by}` : ""}${d.retired_reason ? `: ${d.retired_reason}` : ""}`);
+      for (const m of discarded) lines.push(`- ${m.id} (${m.date}) note discarded${m.discarded_by ? ` by ${m.discarded_by}` : ""}${m.discarded_reason ? `: ${m.discarded_reason}` : ""} — ${m.file}`);
+    }
     lines.push("");
     this.writeAtomic(this.indexFile, lines.join("\n"));
   }
