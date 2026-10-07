@@ -252,7 +252,8 @@ test("a person retires a decision and discards a note; models cannot, and nothin
     assert.ok(!(await s.req("GET", "/api/kb/search?q=retries")).data.results.some((r) => r.id === "D-1"), "search no longer offers it");
     assert.ok((await s.req("GET", "/api/kb/search?q=retries&all=1")).data.results.some((r) => r.id === "D-1"), "but all=1 still finds it");
     assert.ok(s.app.service.kb.decisions({}).some((d) => d.id === "D-1"), "the row is still there, not deleted");
-    assert.ok(!kb.index().includes("D-1"), "and it leaves INDEX.md");
+    const activeSection = (text) => text.slice(text.indexOf("## Active decisions by topic"), text.indexOf("## Topics"));
+    assert.ok(!activeSection(kb.index()).includes("D-1"), "and it leaves the active part of INDEX.md");
     assert.equal((await s.req("POST", "/api/kb/decisions/D-1/retire", { body: { name: "Alastair" } })).status, 409, "retiring twice is refused");
     assert.equal((await s.req("POST", "/api/kb/decisions/D-nope/retire", { body: { name: "Alastair" } })).status, 404);
 
@@ -263,10 +264,16 @@ test("a person retires a decision and discards a note; models cannot, and nothin
     const after = s.app.service.kb.decisions({});
     assert.ok(after.filter((d) => ["D-N1", "D-N2"].includes(d.id)).every((d) => d.status === "retired" && d.retired_by === "Alastair"));
     assert.ok(after.some((d) => d.id === "D-3" && d.status === "active"), "a decision from another meeting is untouched");
-    assert.ok(!kb.index().includes("M20260903-NOTE"), "the note leaves the index");
+    assert.ok(!kb.index().includes("2026-09-03 M20260903-NOTE"), "the note leaves the meetings list");
+    assert.match(kb.index(), /M20260903-NOTE .*note discarded by Alastair: smoke-test room/, "and is named among what was taken out");
     assert.match(fs.readFileSync(file, "utf8"), /The note body stays\./, "and stays on disk, body intact");
     assert.ok((await s.req("GET", "/api/kb/meetings/M20260903-NOTE")).data.meeting.discarded, "readable by id, marked discarded");
     assert.equal((await s.req("POST", "/api/kb/meetings/M20260903-NOTE/discard", { body: { name: "Alastair" } })).status, 409);
+
+    // The index says what was taken out instead of quietly omitting it.
+    assert.match(kb.index(), /retired decision/, "the header admits the omission");
+    assert.match(kb.index(), /## Taken out of the record/);
+    assert.match(kb.index(), /D-1 .*retired by Alastair: a smoke test wrote this/);
 
     // A room-scoped token is refused outright, whatever name it offers.
     const scoped = s.app.auth.createLaunchToken({ room: "MM-AAAA", harness: "h", launch: "L9" });
@@ -278,6 +285,18 @@ test("a person retires a decision and discards a note; models cannot, and nothin
     const broken = path.join(s.config.kbDir, "meetings", "2026", "2026-09-04-MM-BAD-note.md");
     fs.writeFileSync(broken, "id: M20260904-BAD\nno front matter here\n");
     assert.equal((await s.req("POST", "/api/kb/meetings/M20260904-BAD/discard", { body: { name: "Alastair" } })).status, 404, "unparseable front matter means no such meeting");
+
+    // Retiring a decision does not revive what it replaced, and says so.
+    const all = kb.decisions();
+    const older = all.find((d) => d.id === "D-5");
+    older.status = "superseded";
+    older.superseded_by = "D-6";
+    const newer = all.find((d) => d.id === "D-6");
+    newer.supersedes = ["D-5"];
+    kb.saveDecisions(all);
+    const chain = await s.req("POST", "/api/kb/decisions/D-6/retire", { body: { name: "Alastair" } });
+    assert.deepEqual(chain.data.decision.left_superseded, ["D-5"], "it says what stays superseded");
+    assert.equal(kb.decisions().find((d) => d.id === "D-5").status, "superseded", "and does not revive it");
 
     // The per-meeting filter the note page uses.
     const mine = await s.req("GET", "/api/kb/decisions?meeting=M-D-5");

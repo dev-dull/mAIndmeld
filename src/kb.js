@@ -204,6 +204,13 @@ export class KnowledgeStore {
     d.updated_at = now.toISOString();
     this.saveDecisions(all);
     this.writeIndex();
+    // Retiring a decision does not revive what it replaced: that would be the
+    // system deciding. It does say so, because a topic can be left with nothing
+    // active and no sign of why.
+    d.left_superseded = (d.supersedes || []).filter((id) => {
+      const old = all.find((x) => x.id === id);
+      return old && old.status === "superseded";
+    });
     return d;
   }
 
@@ -225,8 +232,11 @@ export class KnowledgeStore {
     // way through leaves things out of the record rather than left in it.
     const all = this.decisions();
     const retired = [];
+    // By its own meeting tag, and also by what the note says it produced: if the
+    // two ever disagree, a decision from a discarded note must not survive it.
+    const claimed = new Set(parseFrontMatter(text).decisions || []);
     for (const d of all) {
-      if (d.meeting !== meetingId || d.status === "retired" || d.status === "retired_by_resummarize") continue;
+      if ((d.meeting !== meetingId && !claimed.has(d.id)) || d.status === "retired" || d.status === "retired_by_resummarize") continue;
       d.status = "retired";
       d.retired_by = by;
       d.retired_reason = reason ? `${reason} (note discarded)` : "note discarded";
@@ -366,9 +376,23 @@ export class KnowledgeStore {
     const topics = this.topics();
     const active = decisions.filter((d) => d.status === "active" && !d.provisional);
     const provisional = decisions.filter((d) => d.status === "active" && d.provisional);
+    const retired = decisions.filter((d) => d.status === "retired" || d.status === "retired_by_resummarize");
+    const discarded = this.listMeetings().filter((m) => m.discarded);
     const byTopic = new Map();
     for (const d of active) byTopic.set(d.topic, [...(byTopic.get(d.topic) || []), d]);
-    const lines = ["# mAIndmeld knowledge index", "", `Generated ${new Date().toISOString()}. ${meetings.length} meetings, ${active.length} active decisions, ${topics.length} topics.`, "", "## Active decisions by topic", ""];
+    const lines = [
+      "# mAIndmeld knowledge index",
+      "",
+      `Generated ${new Date().toISOString()}. ${meetings.length} meetings, ${active.length} active decisions, ${topics.length} topics.`,
+      // An index that silently omitted what a person took out would be claiming a
+      // completeness it does not have, so it says what is missing and where it went.
+      ...(retired.length || discarded.length
+        ? [`${retired.length} retired decision${retired.length === 1 ? "" : "s"} and ${discarded.length} discarded note${discarded.length === 1 ? "" : "s"} are listed at the end; they stay on disk and stay readable.`]
+        : []),
+      "",
+      "## Active decisions by topic",
+      "",
+    ];
     for (const t of [...byTopic.keys()].sort()) {
       lines.push(`### ${t}`, "");
       for (const d of byTopic.get(t)) lines.push(`- ${d.id} (${d.date}): ${d.statement}`);
@@ -386,6 +410,11 @@ export class KnowledgeStore {
     lines.push("", "## Recent meetings", "");
     for (const m of meetings.slice(0, 30)) lines.push(`- ${m.date} ${m.id}: ${m.title} (${(m.decisions || []).length} decisions) — ${m.file}`);
     if (!meetings.length) lines.push("None yet.");
+    if (retired.length || discarded.length) {
+      lines.push("", "## Taken out of the record", "", "Readable with inactive entries shown; nothing here was deleted.", "");
+      for (const d of retired) lines.push(`- ${d.id} (${d.topic}, ${d.date}) retired${d.retired_by ? ` by ${d.retired_by}` : ""}${d.retired_reason ? `: ${d.retired_reason}` : ""}`);
+      for (const m of discarded) lines.push(`- ${m.id} (${m.date}) note discarded${m.discarded_by ? ` by ${m.discarded_by}` : ""}${m.discarded_reason ? `: ${m.discarded_reason}` : ""} — ${m.file}`);
+    }
     lines.push("");
     this.writeAtomic(this.indexFile, lines.join("\n"));
   }

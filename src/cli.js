@@ -352,6 +352,9 @@ class Cli {
       if (!arg) throw new Error('usage: maindmeld kb retire D-ID --reason "why"');
       const { decision } = await this.api("POST", `/api/kb/decisions/${encodeURIComponent(arg)}/retire`, { name: this.flags.as || this.config.humanName, reason: this.flags.reason });
       this.io.out(`${decision.id} retired by ${decision.retired_by}${decision.retired_reason ? `: ${decision.retired_reason}` : ""}`);
+      if (decision.left_superseded?.length) {
+        this.io.out(`note: it replaced ${decision.left_superseded.join(", ")}, which stay superseded. Retiring this one does not bring them back.`);
+      }
     } else if (what === "discard") {
       if (!arg) throw new Error('usage: maindmeld kb discard M-ID [--reason "why"]');
       const r = await this.api("POST", `/api/kb/meetings/${encodeURIComponent(arg)}/discard`, { name: this.flags.as || this.config.humanName, reason: this.flags.reason });
