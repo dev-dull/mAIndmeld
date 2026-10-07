@@ -206,12 +206,13 @@ export class KnowledgeStore {
     this.writeIndex();
     // Retiring a decision does not revive what it replaced: that would be the
     // system deciding. It does say so, because a topic can be left with nothing
-    // active and no sign of why.
-    d.left_superseded = (d.supersedes || []).filter((id) => {
+    // active and no sign of why. Returned on a copy, never stored: a stored row
+    // carries what was decided, not what one caller was told afterwards.
+    const leftSuperseded = (d.supersedes || []).filter((id) => {
       const old = all.find((x) => x.id === id);
       return old && old.status === "superseded";
     });
-    return d;
+    return { ...d, left_superseded: leftSuperseded };
   }
 
   /**
