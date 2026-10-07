@@ -41,6 +41,8 @@ Knowledge store
   resummarize M-ID              rebuild a meeting's note from its transcript
   kb meetings | decisions [TOPIC] | topics | note M-ID | index
   kb reindex                    rewrite INDEX.md and embed decisions that lack a vector
+  kb retire D-ID --reason "..."   take a decision out of retrieval; nothing is deleted
+  kb discard M-ID [--reason ...]  discard a whole note and retire its decisions
   search "query" [--k N] [--topic T] [--all]
   brief CODE                    what a called human needs to know
   sweep [run] [--all] | list | show SWEEP | apply SWEEP N | reject SWEEP N
@@ -346,11 +348,19 @@ class Cli {
     } else if (what === "index") {
       const res = await fetch(`${this.base}/api/kb/index`, { headers: { authorization: `Bearer ${this.cliToken({ create: true })}` } });
       this.io.out(await res.text());
+    } else if (what === "retire") {
+      if (!arg) throw new Error('usage: maindmeld kb retire D-ID --reason "why"');
+      const { decision } = await this.api("POST", `/api/kb/decisions/${encodeURIComponent(arg)}/retire`, { name: this.flags.as || this.config.humanName, reason: this.flags.reason });
+      this.io.out(`${decision.id} retired by ${decision.retired_by}${decision.retired_reason ? `: ${decision.retired_reason}` : ""}`);
+    } else if (what === "discard") {
+      if (!arg) throw new Error('usage: maindmeld kb discard M-ID [--reason "why"]');
+      const r = await this.api("POST", `/api/kb/meetings/${encodeURIComponent(arg)}/discard`, { name: this.flags.as || this.config.humanName, reason: this.flags.reason });
+      this.io.out(`${arg} discarded by ${r.meeting.discarded_by}; ${r.retired.length} decision${r.retired.length === 1 ? "" : "s"} retired${r.retired.length ? `: ${r.retired.join(", ")}` : ""}`);
     } else if (what === "reindex") {
       const { reindex } = await this.api("POST", "/api/kb/index", {});
       if (!reindex.enabled) return this.io.out("index rewritten; no embeddings profile is configured");
       this.io.out(`index rewritten; ${reindex.embedded} vector${reindex.embedded === 1 ? "" : "s"} written, ${reindex.vectors} total for ${reindex.model}`);
-    } else throw new Error("usage: maindmeld kb meetings | decisions [TOPIC] | topics | note M-ID | index | reindex");
+    } else throw new Error("usage: maindmeld kb meetings | decisions [TOPIC] | topics | note M-ID | index | reindex | retire D-ID | discard M-ID");
   }
 
   async search(query, flags) {

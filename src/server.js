@@ -242,6 +242,21 @@ export function createApp(config = loadConfig()) {
   }
 
   /**
+   * Dropping a vector is housekeeping, not part of what retire promises: search
+   * filters by status before it ever looks a vector up, so a leftover row is
+   * wasted space rather than a wrong answer. It must not fail a retire that is
+   * already written to disk.
+   */
+  function dropVectors(ids) {
+    try {
+      return embeddingStore.remove(ids);
+    } catch (error) {
+      log(`embeddings: could not drop ${ids.length} vector${ids.length === 1 ? "" : "s"}: ${error.message}`);
+      return 0;
+    }
+  }
+
+  /**
    * Best effort: embed decisions that lack a vector from the current model, in
    * chunks so a backfill of a large store keeps what it has finished when the
    * endpoint fails or times out. Returns how many vectors were written. Never throws.
@@ -1001,8 +1016,35 @@ export function createApp(config = loadConfig()) {
       index: () => kb.index(),
       meetings: () => kb.listMeetings(),
       meeting: (id) => kb.readMeeting(id),
-      decisions: ({ status, topic } = {}) => kb.decisions().filter((d) => (!status || d.status === status) && (!topic || d.topic === topic)),
+      decisions: ({ status, topic, meeting } = {}) => kb.decisions().filter((d) => (!status || d.status === status) && (!topic || d.topic === topic) && (!meeting || d.meeting === meeting)),
       topics: () => kb.topics(),
+      /**
+        * A person takes something out of the record. Models propose, people
+        * decide: this is the human end of that rule, and the only way to say a
+        * decision should not have been written at all. Nothing is deleted.
+        */
+      retire(principal, id, body) {
+        const by = principal.kind === "session" ? principal.name : body.name;
+        if (!by) throw new HttpError(403, "retiring a decision is a human power; pass your name");
+        try {
+          const decision = kb.retireDecision(String(id), { by, reason: body.reason });
+          log(`kb: ${by} retired ${decision.id}${body.reason ? `: ${body.reason}` : ""}`);
+          return { decision, vectors_dropped: dropVectors([decision.id]) };
+        } catch (error) {
+          throw new HttpError(error.status || 400, error.message);
+        }
+      },
+      discard(principal, id, body) {
+        const by = principal.kind === "session" ? principal.name : body.name;
+        if (!by) throw new HttpError(403, "discarding a note is a human power; pass your name");
+        try {
+          const result = kb.discardMeeting(String(id), { by, reason: body.reason });
+          log(`kb: ${by} discarded ${id}, retiring ${result.retired.length} decision${result.retired.length === 1 ? "" : "s"}`);
+          return { ...result, vectors_dropped: dropVectors(result.retired) };
+        } catch (error) {
+          throw new HttpError(error.status || 400, error.message);
+        }
+      },
       reindex: async () => {
         kb.writeIndex();
         const embedded = await embedMissing();
@@ -1512,6 +1554,14 @@ export function createApp(config = loadConfig()) {
         }
         throw new HttpError(404, "not found");
       }
+      if (req.method === "POST" && code === "decisions" && sub && id === "retire") {
+        requireScope(principal, null);
+        return send(res, 200, service.kb.retire(principal, sub, await readBody(req)));
+      }
+      if (req.method === "POST" && code === "meetings" && sub && id === "discard") {
+        requireScope(principal, null);
+        return send(res, 200, service.kb.discard(principal, sub, await readBody(req)));
+      }
       if (req.method === "POST" && code === "index" && !sub) {
         // Rewrite INDEX.md and embed every decision that lacks a vector from the
         // current model: the backfill after enabling or changing embeddings.
@@ -1529,7 +1579,7 @@ export function createApp(config = loadConfig()) {
         if (!m) throw new HttpError(404, `no meeting ${sub}`);
         return send(res, 200, { meeting: m });
       }
-      if (code === "decisions") return send(res, 200, { decisions: service.kb.decisions({ status: url.searchParams.get("status") || undefined, topic: url.searchParams.get("topic") || undefined }) });
+      if (code === "decisions") return send(res, 200, { decisions: service.kb.decisions({ status: url.searchParams.get("status") || undefined, topic: url.searchParams.get("topic") || undefined, meeting: url.searchParams.get("meeting") || undefined }) });
       if (code === "topics") return send(res, 200, { topics: service.kb.topics() });
       if (code === "search") {
         const q = url.searchParams.get("q") || "";
