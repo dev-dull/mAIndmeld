@@ -88,6 +88,23 @@ Searching needs a deliberate submit, never a keystroke, because every query
 is embedded through the configured profile and would otherwise spend a
 provider request per character.
 
+Taking something out is a human power, in the same spirit as the sweep. A
+person retires one decision, or discards a whole note when a room should
+never have been summarized at all, from the note page, the CLI
+(`maindmeld kb retire D-ID --reason "..."`, `maindmeld kb discard M-ID`) or
+the API. A room-scoped token is refused outright, and any other token has to say who
+it acts for. That is attribution rather than proof: the server cannot tell a
+person's token from an agent's, so the name travels with the change and is
+written down beside it. Model participants hold no token and make no requests
+of their own, so they cannot reach it at all.
+
+Nothing is deleted. The statement, its rationale, the note behind it and the
+supersession chain all stay on disk and stay readable, including through
+search with superseded and retired shown. What changes is that retrieval
+stops offering it, it leaves `INDEX.md`, its vector is dropped, and who did
+it and why are written down beside it. That is the difference between
+correcting the record and hiding something.
+
 A weekly sweep looks for active decisions on the same topic that may
 conflict, deterministic rules first and a model second, and writes a
 report of proposals. The sweep never retires anything: a person applies or

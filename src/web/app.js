@@ -84,6 +84,77 @@ function roomCard(r) {
   </article>`;
 }
 
+/**
+ * Taking something out of the record, from the page where a person reads it.
+ * Two steps on purpose: the button asks for a reason before it does anything,
+ * because "why" is the part worth keeping. Nothing is deleted either way.
+ */
+function confirmBox({ label, verb, danger, onConfirm }) {
+  const wrap = document.createElement("div");
+  wrap.className = "retire";
+  const open = () => {
+    wrap.innerHTML = `<input type="text" maxlength="300" placeholder="Why? (optional)" aria-label="Reason">
+      <button class="small${danger ? " danger" : ""}" data-go>${esc(verb)}</button>
+      <button class="small" data-cancel>Cancel</button>`;
+    wrap.querySelector("[data-cancel]").addEventListener("click", shut);
+    wrap.querySelector("[data-go]").addEventListener("click", async () => {
+      const reason = wrap.querySelector("input").value.trim();
+      for (const b of wrap.querySelectorAll("button")) b.disabled = true;
+      try {
+        await onConfirm(reason);
+      } catch (error) {
+        toast(error.message);
+        open();
+      }
+    });
+    wrap.querySelector("input").focus();
+  };
+  const shut = () => {
+    wrap.innerHTML = `<button class="small${danger ? " danger" : ""}">${esc(label)}</button>`;
+    wrap.querySelector("button").addEventListener("click", open);
+  };
+  shut();
+  return wrap;
+}
+
+async function renderNoteDecisions(meetingId) {
+  const section = $("#note-decisions");
+  const list = $("#note-decision-list");
+  if (!section || !list) return;
+  const { decisions } = await api("GET", `/api/kb/decisions?meeting=${encodeURIComponent(meetingId)}`);
+  if (!decisions.length) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  list.innerHTML = "";
+  for (const d of decisions) {
+    const row = document.createElement("div");
+    row.className = `decision${d.status === "active" ? "" : " inactive"}`;
+    row.innerHTML = `<div class="card-head">
+        <span class="card-title">${esc(d.statement)}</span>
+        ${d.status === "active" ? "" : `<span class="badge status">${esc(d.status)}</span>`}
+      </div>
+      <div class="card-meta">
+        <span class="badge status">${esc(d.topic)}</span>
+        <code>${esc(d.id)}</code>
+        ${d.retired_by ? `<span>retired by ${esc(d.retired_by)}${d.retired_reason ? `: ${esc(d.retired_reason)}` : ""}</span>` : ""}
+      </div>`;
+    if (d.status === "active") {
+      row.append(confirmBox({
+        label: "Retire",
+        verb: "Retire it",
+        onConfirm: async (reason) => {
+          await api("POST", `/api/kb/decisions/${encodeURIComponent(d.id)}/retire`, { reason });
+          toast(`${d.id} retired`);
+          renderNoteDecisions(meetingId);
+        },
+      }));
+    }
+    list.append(row);
+  }
+}
+
 function initNote() {
   whoAmI().catch(() => {});
   const id = location.pathname.split("/")[2];
@@ -99,6 +170,22 @@ function initNote() {
     const body = meeting.markdown.replace(/^---[\s\S]*?---\n\n?/, "");
     if (window.renderMarkdown) $("#note").innerHTML = window.renderMarkdown(body);
     else $("#note").textContent = body;
+    renderNoteDecisions(id).catch(() => {});
+    const discard = $("#note-discard");
+    if (discard && !meeting.discarded) {
+      discard.append(confirmBox({
+        label: "Discard this note",
+        verb: "Discard it",
+        danger: true,
+        onConfirm: async (reason) => {
+          const r = await api("POST", `/api/kb/meetings/${encodeURIComponent(id)}/discard`, { reason });
+          toast(`Discarded; ${r.retired.length} decision${r.retired.length === 1 ? "" : "s"} retired`);
+          location.reload();
+        },
+      }));
+    } else if (discard && meeting.discarded) {
+      discard.innerHTML = `<div class="empty">Discarded by ${esc(meeting.discarded_by || "someone")}${meeting.discarded_reason ? `: ${esc(meeting.discarded_reason)}` : ""}. The note is kept and stays readable.</div>`;
+    }
   }).catch((e) => { $("#note").textContent = e.message; });
 }
 

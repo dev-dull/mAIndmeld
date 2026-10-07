@@ -6,6 +6,20 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- A person can take something out of the record: `POST
+  /api/kb/decisions/:id/retire` for one decision, `POST
+  /api/kb/meetings/:id/discard` for a whole note and the decisions it
+  produced, with `maindmeld kb retire` and `maindmeld kb discard` and
+  controls on the note page (#13). Both are human powers, refused unless
+  the caller says who they act for, so a model still only proposes.
+  Nothing is deleted: the text, the rationale and the note stay on disk and
+  stay readable with inactive decisions shown, while retrieval, `INDEX.md`
+  and the embedding index drop the row and the reason is recorded beside
+  it.
+- `GET /api/kb/decisions?meeting=M-ID` lists the decisions one meeting
+  produced, which the note page uses.
+
 ## [0.6.0] - 2026-10-05
 
 ### Added

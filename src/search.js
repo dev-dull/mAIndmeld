@@ -119,6 +119,21 @@ export class EmbeddingStore {
     return map;
   }
 
+  /** Drop vectors for ids that should no longer be retrievable. Rewrites the file. */
+  remove(ids) {
+    const drop = new Set(ids);
+    if (!drop.size || !fs.existsSync(this.file)) return 0;
+    const kept = [];
+    let removed = 0;
+    for (const line of fs.readFileSync(this.file, "utf8").split("\n")) {
+      if (!line) continue;
+      if (drop.has(JSON.parse(line).id)) removed += 1;
+      else kept.push(line);
+    }
+    if (removed) fs.writeFileSync(this.file, kept.length ? `${kept.join("\n")}\n` : "", { mode: 0o600 });
+    return removed;
+  }
+
   append(records) {
     fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
     fs.appendFileSync(this.file, records.map((r) => JSON.stringify(r)).join("\n") + (records.length ? "\n" : ""), { mode: 0o600 });

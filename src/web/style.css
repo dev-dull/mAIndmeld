@@ -304,3 +304,10 @@ button.topic .count { color: var(--muted); font-variant-numeric: tabular-nums; }
 .kb-search.compact input[type="search"] { flex: 1 1 auto; min-width: 0; }
 #room-kb-results:empty { display: none; }
 .decisions.compact button.cite { padding: 0.05rem 0.4rem; font-size: 0.7rem; }
+
+/* Taking something out of the record, on the note page. */
+.note-decisions { margin-top: 1.5rem; max-width: 100ch; }
+.note-decisions h2 { font-size: 1rem; }
+#note-decision-list { display: grid; gap: 0.5rem; margin-bottom: 1rem; }
+.retire { display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; margin-top: 0.35rem; }
+.retire input { flex: 1 1 14rem; min-width: 0; }
