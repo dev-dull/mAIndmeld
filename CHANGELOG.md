@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-25
+
 ### Added
 - A person can take something out of the record: `POST
   /api/kb/decisions/:id/retire` for one decision, `POST
@@ -268,7 +270,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Notifiers: webhook, ntfy, desktop.
 - Docker image, compose demo, CI, security policy.
 
-[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/dev-dull/mAIndmeld/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.6.1
 [0.6.0]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.6.0
 [0.5.5]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.5
 [0.5.4]: https://github.com/dev-dull/mAIndmeld/releases/tag/v0.5.4
